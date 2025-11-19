@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
 import LogObstacle from './LogObstacle'
 import Player from './Player'
+import CameraControl from './CameraControl'
 import { usePose } from '../hooks/usePose'
 import { useJumpDetection } from '../hooks/useJumpDetection'
 
@@ -17,6 +18,18 @@ function RunnerScene({ calibrationData, customization }) {
   const [stream, setStream] = useState(null)
   const [gameOver, setGameOver] = useState(false)
   const [score, setScore] = useState(0)
+  const [gameKey, setGameKey] = useState(0)
+
+  // Reset game function - restarts game without going back to calibration
+  const resetGame = () => {
+    setObstacles([])
+    setScore(0)
+    setGameOver(false)
+    setGameKey(prev => prev + 1) // Force re-render with new key
+    playerPositionRef.current = [0, 0.5, 0] // Reset player position
+    // Manually restart game speed after reset (since isLoading won't change)
+    setGameSpeed(0.02)
+  }
 
   const { poses, isLoading } = usePose(videoRef)
   const { isJumping } = useJumpDetection(poses, calibrationData?.baselineHipHeight)
@@ -171,7 +184,7 @@ function RunnerScene({ calibrationData, customization }) {
           <h1 style={{ fontSize: '3em', marginBottom: '20px' }}>Game Over!</h1>
           <p style={{ fontSize: '1.5em', marginBottom: '30px' }}>Score: {score}</p>
           <button 
-            onClick={() => window.location.reload()}
+            onClick={resetGame}
             style={{
               padding: '15px 30px',
               fontSize: '18px',
@@ -201,7 +214,12 @@ function RunnerScene({ calibrationData, customization }) {
         Score: {score}
       </div>
       
-      <Canvas camera={{ position: [0, 2, 7], fov: 70, rotation: [0, 0, 0] }}>
+      <Canvas 
+        key={gameKey} 
+        camera={{ position: [0, 5, 8], fov: 75 }}
+        style={{ width: '100vw', height: '100vh', display: 'block' }}
+      >
+        <CameraControl />
         <ambientLight intensity={0.6} />
         <directionalLight position={[10, 10, 5]} intensity={0.8} />
         
