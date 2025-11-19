@@ -2,6 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import * as poseDetection from '@tensorflow-models/pose-detection'
 import * as tf from '@tensorflow/tfjs'
 
+// PRIVACY: Processes video frames in-memory only. Each frame is analyzed and
+// immediately discarded. Only pose keypoint coordinates (numbers) are kept
+// temporarily in state, then discarded when component unmounts. No images
+// or video frames are saved, cached, uploaded, or stored.
+
 export function usePose(videoRef) {
   const [detector, setDetector] = useState(null)
   const [poses, setPoses] = useState(null)
@@ -36,8 +41,11 @@ export function usePose(videoRef) {
 
     async function detectPose() {
       if (videoRef.current?.readyState === 4) {
+        // Process frame in-memory only - no storage or caching
         const detectedPoses = await detector.estimatePoses(videoRef.current)
+        // Only store numeric keypoint coordinates (not video frames)
         setPoses(detectedPoses)
+        // Frame data automatically discarded by browser after processing
       }
       animationFrameRef.current = requestAnimationFrame(detectPose)
     }
