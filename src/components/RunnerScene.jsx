@@ -26,9 +26,9 @@ function RunnerScene({ calibrationData, customization }) {
     setScore(0)
     setGameOver(false)
     setGameKey(prev => prev + 1) // Force re-render with new key
-    playerPositionRef.current = [0, 0.5, 0] // Reset player position
+    playerPositionRef.current = [0, 0.5, 20] // Reset player position (z=20)
     // Manually restart game speed after reset (since isLoading won't change)
-    setGameSpeed(0.02)
+    setGameSpeed(0.075)
   }
 
   const { poses, isLoading } = usePose(videoRef)
@@ -61,7 +61,7 @@ function RunnerScene({ calibrationData, customization }) {
   // Start game
   useEffect(() => {
     if (!isLoading) {
-      setGameSpeed(0.02) // Slower starting speed
+      setGameSpeed(0.075) // 25% faster - blocks move faster
     }
   }, [isLoading])
 
@@ -76,20 +76,20 @@ function RunnerScene({ calibrationData, customization }) {
 
     let spawnTimer
     const spawnObstacle = () => {
-      const baseSpawnRate = 4000 // 4 seconds base (slower, more spacing)
+      const baseSpawnRate = 5000 // 5 seconds base (more spacing between logs)
       const difficultyMultiplier = Math.min(1 + gameSpeed * 5, 1.5) // Slower increase
-      const spawnRate = Math.max(baseSpawnRate / difficultyMultiplier, 2500) // Min 2.5 seconds
+      const spawnRate = Math.max(baseSpawnRate / difficultyMultiplier, 3500) // Min 3.5 seconds (more spacing)
 
       setObstacles(prev => [...prev, {
         id: Date.now(),
-        z: -10,
+        z: -25, // Spawn much further back so player has more reaction time
         x: 0 // Single lane
       }])
       
       spawnTimer = setTimeout(spawnObstacle, spawnRate)
     }
 
-    spawnTimer = setTimeout(spawnObstacle, 4000) // Start after 4 seconds
+    spawnTimer = setTimeout(spawnObstacle, 5000) // Start after 5 seconds
 
     return () => {
       if (spawnTimer) clearTimeout(spawnTimer)
@@ -111,16 +111,18 @@ function RunnerScene({ calibrationData, customization }) {
           const playerPos = playerPositionRef.current
           const playerX = playerPos[0]
           const playerY = playerPos[1] // Height above ground
-          const playerZ = playerPos[2] || 0
+          const playerZ = playerPos[2] || 20 // Player is at z=20
           
-          // Check X overlap (lateral collision)
-          const xOverlap = Math.abs(obs.x - playerX) < 1.0
+          // Check X overlap (lateral collision) - log is narrower now (radius 0.5)
+          const xOverlap = Math.abs(obs.x - playerX) < 0.8
           // Check Z overlap (depth collision) - obstacle is approaching from negative z
-          const zOverlap = newZ > -1.0 && newZ < 1.5
+          // Log is shallower now (height 1.5, rotated), adjust collision zone
+          // Player is at z=20, so check overlap relative to that
+          const zOverlap = newZ > 18.5 && newZ < 21.0
           // Check Y overlap (vertical) - player must be low enough to hit obstacle
-          // Obstacle top is at y=1.0 (position 0.5 + height 0.5), player bottom is at y=0
-          // Player is safe if jumping high enough (y > 1.2)
-          const yCollision = playerY < 1.2
+          // Log is at y=0.5, height 1.5 (diameter), but rotated so it's a cylinder lying flat
+          // Log top is roughly at y=1.25 (0.5 + radius 0.75), player is safe if y > 1.3
+          const yCollision = playerY < 1.3
           
           if (xOverlap && zOverlap && yCollision) {
             // Collision detected!
@@ -130,9 +132,9 @@ function RunnerScene({ calibrationData, customization }) {
           return { ...obs, z: newZ }
         })
         
-        // Remove obstacles that passed and increment score
-        const passed = updated.filter(obs => obs.z > 2)
-        const remaining = updated.filter(obs => obs.z <= 2)
+        // Remove obstacles that passed player (player is at z=20, remove when z > 21)
+        const passed = updated.filter(obs => obs.z > 21)
+        const remaining = updated.filter(obs => obs.z <= 21)
         if (passed.length > 0) {
           setScore(prev => prev + passed.length)
         }
@@ -148,7 +150,7 @@ function RunnerScene({ calibrationData, customization }) {
     if (gameOver) return
     
     const difficultyInterval = setInterval(() => {
-      setGameSpeed(prev => Math.min(prev + 0.001, 0.04)) // Cap at 0.04 (slower max)
+      setGameSpeed(prev => Math.min(prev + 0.001, 0.1)) // Cap at 0.1 (higher since we start faster)
     }, 10000) // Increase every 10 seconds (slower)
 
     return () => clearInterval(difficultyInterval)
@@ -216,7 +218,7 @@ function RunnerScene({ calibrationData, customization }) {
       
       <Canvas 
         key={gameKey} 
-        camera={{ position: [0, 5, 8], fov: 75 }}
+        camera={{ position: [0, 5.5, 25], fov: 75 }}
         style={{ width: '100vw', height: '100vh', display: 'block' }}
       >
         <CameraControl />
@@ -237,16 +239,16 @@ function RunnerScene({ calibrationData, customization }) {
           </mesh>
         ))}
         
-        {/* Ground */}
+        {/* Ground - extended length much further */}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-          <planeGeometry args={[20, 100]} />
+          <planeGeometry args={[20, 500]} />
           <meshStandardMaterial color="#4a7c59" />
         </mesh>
 
-        {/* Player */}
-        <Player position={0} isJumping={isJumping} customization={customization} onPositionUpdate={updatePlayerPosition} />
+        {/* Player - positioned at z=20 as requested */}
+        <Player position={20} isJumping={isJumping} customization={customization} onPositionUpdate={updatePlayerPosition} />
 
-        {/* Obstacles */}
+        {/* Obstacles - logs positioned slightly lower to match shallower height */}
         {obstacles.map(obs => (
           <LogObstacle key={obs.id} position={[obs.x, 0.5, obs.z]} />
         ))}
