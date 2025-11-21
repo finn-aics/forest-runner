@@ -9,10 +9,14 @@ function Player({ position, isJumping, customization, onPositionUpdate }) {
 
   // Detect jump start (edge detection)
   useEffect(() => {
-    if (isJumping && !prevJumping.current && isGrounded.current) {
-      velocityY.current = 0.3
-      isGrounded.current = false
+    // Jump on rising edge (false -> true) when grounded
+    if (isJumping && !prevJumping.current) {
+      if (isGrounded.current) {
+        velocityY.current = 0.3
+        isGrounded.current = false
+      }
     }
+    
     prevJumping.current = isJumping
   }, [isJumping])
 
@@ -34,6 +38,10 @@ function Player({ position, isJumping, customization, onPositionUpdate }) {
       isGrounded.current = true
     } else {
       playerRef.current.position.y = newY
+      // Only set isGrounded false if we're actually moving up
+      if (velocityY.current > 0) {
+        isGrounded.current = false
+      }
     }
 
     // Update position for collision detection

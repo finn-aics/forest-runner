@@ -26,13 +26,16 @@ function RunnerScene({ calibrationData, customization }) {
     setScore(0)
     setGameOver(false)
     setGameKey(prev => prev + 1) // Force re-render with new key
-    playerPositionRef.current = [0, 0.5, 20] // Reset player position (z=20)
+    playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(0.075)
   }
 
   const { poses, isLoading } = usePose(videoRef)
-  const { isJumping } = useJumpDetection(poses, calibrationData?.baselineHipHeight)
+  const { isJumping } = useJumpDetection(
+    poses, 
+    calibrationData?.baselineHipHeight ?? null
+  )
 
   // Start webcam for game
   useEffect(() => {
@@ -44,6 +47,19 @@ function RunnerScene({ calibrationData, customization }) {
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream
           setStream(mediaStream)
+          
+          // Wait for video to be ready before pose detection starts
+          videoRef.current.onloadedmetadata = () => {
+            // Force video to play to ensure frames are available
+            videoRef.current.play().catch(err => {
+              console.error('Error playing video:', err)
+            })
+          }
+          
+          // Also try to play immediately
+          videoRef.current.play().catch(err => {
+            console.error('Error playing video:', err)
+          })
         }
       } catch (error) {
         console.error('Error accessing webcam:', error)
@@ -111,14 +127,14 @@ function RunnerScene({ calibrationData, customization }) {
           const playerPos = playerPositionRef.current
           const playerX = playerPos[0]
           const playerY = playerPos[1] // Height above ground
-          const playerZ = playerPos[2] || 20 // Player is at z=20
+          const playerZ = playerPos[2] || 26 // Player is at z=26
           
           // Check X overlap (lateral collision) - log is narrower now (radius 0.5)
           const xOverlap = Math.abs(obs.x - playerX) < 0.8
           // Check Z overlap (depth collision) - obstacle is approaching from negative z
           // Log is shallower now (height 1.5, rotated), adjust collision zone
-          // Player is at z=20, so check overlap relative to that
-          const zOverlap = newZ > 18.5 && newZ < 21.0
+          // Player is at z=26, so check overlap relative to that
+          const zOverlap = newZ > 24.5 && newZ < 27.0
           // Check Y overlap (vertical) - player must be low enough to hit obstacle
           // Log is at y=0.5, height 1.5 (diameter), but rotated so it's a cylinder lying flat
           // Log top is roughly at y=1.25 (0.5 + radius 0.75), player is safe if y > 1.3
@@ -132,9 +148,9 @@ function RunnerScene({ calibrationData, customization }) {
           return { ...obs, z: newZ }
         })
         
-        // Remove obstacles that passed player (player is at z=20, remove when z > 21)
-        const passed = updated.filter(obs => obs.z > 21)
-        const remaining = updated.filter(obs => obs.z <= 21)
+        // Remove obstacles that passed player (player is at z=26, remove when z > 27)
+        const passed = updated.filter(obs => obs.z > 27)
+        const remaining = updated.filter(obs => obs.z <= 27)
         if (passed.length > 0) {
           setScore(prev => prev + passed.length)
         }
@@ -164,7 +180,7 @@ function RunnerScene({ calibrationData, customization }) {
         autoPlay 
         playsInline
         muted
-        style={{ position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+        style={{ position: 'absolute', top: 0, left: 0, width: 320, height: 240, opacity: 0, pointerEvents: 'none', zIndex: -1 }}
       />
       
       {/* Game Over Overlay */}
@@ -218,7 +234,7 @@ function RunnerScene({ calibrationData, customization }) {
       
       <Canvas 
         key={gameKey} 
-        camera={{ position: [0, 5.5, 25], fov: 75 }}
+        camera={{ position: [0, 7.5, 32], fov: 82 }}
         style={{ width: '100vw', height: '100vh', display: 'block' }}
       >
         <CameraControl />
@@ -245,8 +261,8 @@ function RunnerScene({ calibrationData, customization }) {
           <meshStandardMaterial color="#4a7c59" />
         </mesh>
 
-        {/* Player - positioned at z=20 as requested */}
-        <Player position={20} isJumping={isJumping} customization={customization} onPositionUpdate={updatePlayerPosition} />
+        {/* Player - positioned at z=26 */}
+        <Player position={26} isJumping={isJumping} customization={customization} onPositionUpdate={updatePlayerPosition} />
 
         {/* Obstacles - logs positioned slightly lower to match shallower height */}
         {obstacles.map(obs => (

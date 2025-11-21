@@ -9,6 +9,7 @@ export function useJumpDetection(poses, baselineHipHeight = null) {
   const [currentHipHeight, setCurrentHipHeight] = useState(null)
   const smoothedHipHeightRef = useRef(null)
   const jumpThresholdRef = useRef(null)
+  const prevBaselineRef = useRef(null)
 
   useEffect(() => {
     if (!poses || poses.length === 0) {
@@ -35,8 +36,15 @@ export function useJumpDetection(poses, baselineHipHeight = null) {
       }
     }
 
-    // Check if keypoints exist and have valid scores (confidence > 0.3)
-    if (!leftHip || !rightHip || !leftHip.score || !rightHip.score || leftHip.score < 0.3 || rightHip.score < 0.3) {
+    // Check if keypoints exist and have valid scores (higher confidence required)
+    if (!leftHip || !rightHip || !leftHip.score || !rightHip.score || leftHip.score < 0.4 || rightHip.score < 0.4) {
+      return
+    }
+
+    // Validate hip keypoints - ensure both hips are detected and close in height (validate they're actual hips)
+    const hipHeightDiff = Math.abs(leftHip.y - rightHip.y)
+    if (hipHeightDiff > 50) {
+      // Hips too far apart in height - likely misdetected (could be shoulders/arms)
       return
     }
 
@@ -51,16 +59,30 @@ export function useJumpDetection(poses, baselineHipHeight = null) {
 
     setCurrentHipHeight(smoothedHipHeightRef.current)
 
-    // Set baseline if provided
-    if (baselineHipHeight !== null && jumpThresholdRef.current === null) {
-      jumpThresholdRef.current = baselineHipHeight - 30 // threshold for jump detection
+    // Set baseline threshold if provided (reset when baseline changes)
+    if (baselineHipHeight !== null && baselineHipHeight !== undefined) {
+      // Reset threshold if baseline changed
+      if (prevBaselineRef.current !== baselineHipHeight) {
+        // Increased threshold from 30 to 45 - requires larger hip movement (actual jump, not shrug)
+        jumpThresholdRef.current = baselineHipHeight - 45
+        prevBaselineRef.current = baselineHipHeight
+      }
+    } else {
+      // No baseline, reset threshold
+      jumpThresholdRef.current = null
+      prevBaselineRef.current = null
     }
 
-    // Detect jump: hip moves significantly above baseline
-    if (jumpThresholdRef.current !== null && smoothedHipHeightRef.current !== null) {
-      const jumping = smoothedHipHeightRef.current < jumpThresholdRef.current
+    // Detect jump: hip moves significantly above baseline (lower Y value = higher up)
+    // Require substantial movement - tighten threshold to avoid false positives
+    if (jumpThresholdRef.current !== null && smoothedHipHeightRef.current !== null && baselineHipHeight !== null) {
+      // Only detect jump if hips move significantly above baseline (at least 45 pixels)
+      // This filters out casual movements, shrugs, and arm movements
+      const hipMovement = baselineHipHeight - smoothedHipHeightRef.current
+      const jumping = smoothedHipHeightRef.current < jumpThresholdRef.current && hipMovement >= 35
       setIsJumping(jumping)
     } else {
+      // Can't detect jumps without baseline threshold
       setIsJumping(false)
     }
   }, [poses, baselineHipHeight])

@@ -40,12 +40,20 @@ export function usePose(videoRef) {
     if (!detector || !videoRef?.current) return
 
     async function detectPose() {
-      if (videoRef.current?.readyState === 4) {
-        // Process frame in-memory only - no storage or caching
-        const detectedPoses = await detector.estimatePoses(videoRef.current)
-        // Only store numeric keypoint coordinates (not video frames)
-        setPoses(detectedPoses)
-        // Frame data automatically discarded by browser after processing
+      // Check if video is ready and has valid dimensions
+      if (videoRef.current && 
+          (videoRef.current.readyState === 4 || videoRef.current.readyState >= 2) &&
+          videoRef.current.videoWidth > 0 && 
+          videoRef.current.videoHeight > 0) {
+        try {
+          // Process frame in-memory only - no storage or caching
+          const detectedPoses = await detector.estimatePoses(videoRef.current)
+          // Only store numeric keypoint coordinates (not video frames)
+          setPoses(detectedPoses)
+          // Frame data automatically discarded by browser after processing
+        } catch (error) {
+          console.error('Error detecting poses:', error)
+        }
       }
       animationFrameRef.current = requestAnimationFrame(detectPose)
     }
