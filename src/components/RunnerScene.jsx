@@ -26,7 +26,10 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
   const [gameOver, setGameOver] = useState(false)
   const [score, setScore] = useState(0)
   const [gameKey, setGameKey] = useState(0)
+  const [hearts, setHearts] = useState(3) // Lives system: start with 3 hearts
+  const [playerState, setPlayerState] = useState('running') // State machine: 'running' | 'tumbling' | 'gameOver'
   const scoredObstaclesRef = useRef(new Set())
+  const hitObstaclesRef = useRef(new Set()) // Track obstacles that have already hit the player
   const gameSpeedRef = useRef(0) // Track latest gameSpeed for spawn checks
   const gameOverRef = useRef(false) // Track latest gameOver for spawn checks
   
@@ -60,13 +63,28 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     setObstacles([])
     setScore(0)
     setGameOver(false)
+    setHearts(3) // Reset hearts to 3
+    setPlayerState('running') // Reset to running state
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
     scoredObstaclesRef.current.clear() // Reset scored obstacles tracking
+    hitObstaclesRef.current.clear() // Reset hit obstacles tracking
     resetSpawnTracking() // Reset spawn tracking for new run
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(BASE_LOG_SPEED)
   }
+  
+  // Tumble state handler - enters tumble state after hit, exits after duration
+  useEffect(() => {
+    if (playerState === 'tumbling') {
+      const tumbleDuration = 1500 // 1.5 seconds of tumble
+      const tumbleTimer = setTimeout(() => {
+        setPlayerState('running') // Return to running after tumble
+      }, tumbleDuration)
+      
+      return () => clearTimeout(tumbleTimer)
+    }
+  }, [playerState])
 
   const { poses, isLoading } = usePose(videoRef)
   const { isJumping: poseJumping } = useJumpDetection(
@@ -75,7 +93,9 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
   )
   
   // DEBUG MODE: Use spacebar instead of pose detection
-  const isJumping = debugMode ? debugJumping : poseJumping
+  const rawIsJumping = debugMode ? debugJumping : poseJumping
+  // Prevent jumping during tumble state
+  const isJumping = playerState === 'running' ? rawIsJumping : false
   
   // DEBUG MODE: Up Arrow keyboard listener
   useEffect(() => {
@@ -246,8 +266,22 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
           const yCollision = playerY < 1.3
           
           if (xOverlap && zOverlap && yCollision) {
-            // Collision detected!
-            setGameOver(true)
+            // Collision detected! Handle lives/tumble system
+            // Only process collision if this obstacle hasn't hit the player yet
+            if (!hitObstaclesRef.current.has(obs.id) && playerState === 'running') {
+              hitObstaclesRef.current.add(obs.id) // Mark this obstacle as hit
+              
+              if (hearts > 1) {
+                // Player has hearts remaining - lose one and enter tumble
+                setHearts(prev => prev - 1)
+                setPlayerState('tumbling') // Enter tumble state (prevents jumping)
+              } else if (hearts === 1) {
+                // Last heart - lose it and game over
+                setHearts(0)
+                setGameOver(true)
+                setPlayerState('gameOver')
+              }
+            }
           }
           
           return { ...obs, z: newZ }
@@ -344,6 +378,31 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
         textShadow: '2px 2px 4px rgba(0,0,0,0.8)'
       }}>
         Score: {score}
+      </div>
+      
+      {/* Hearts Display */}
+      <div style={{
+        position: 'absolute',
+        top: '20px',
+        right: '20px',
+        color: 'white',
+        fontSize: '28px',
+        fontWeight: 'bold',
+        zIndex: 100,
+        textShadow: '2px 2px 4px rgba(0,0,0,0.8)',
+        display: 'flex',
+        gap: '8px',
+        alignItems: 'center'
+      }}>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <span key={i} style={{ 
+            color: i < hearts ? '#ff6b6b' : '#444',
+            opacity: i < hearts ? 1 : 0.3,
+            transition: 'all 0.3s'
+          }}>
+            ❤️
+          </span>
+        ))}
       </div>
       
       <Canvas 
