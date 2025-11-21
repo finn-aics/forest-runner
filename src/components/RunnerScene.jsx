@@ -10,6 +10,12 @@ import { useJumpDetection } from '../hooks/useJumpDetection'
 // frame-by-frame for pose detection. No frames, images, or pose data are saved
 // or stored anywhere. All data is discarded immediately after processing.
 
+// Game constants - easy to tune difficulty
+const BASE_LOG_SPEED = 0.12 // Centralized log speed (increased from 0.075)
+const MIN_LOG_SPACING = 1800 // Minimum time between logs (ms) - strictly enforced (reduced from 4000)
+const FIRST_LOG_DELAY = 500 // Delay before first log appears (reduced from 2000 - almost immediate)
+const LOG_DESPAWN_DISTANCE = 15 // Distance behind player before log despawns (increased from ~1)
+
 function RunnerScene({ calibrationData, customization }) {
   const videoRef = useRef(null)
   const playerPositionRef = useRef([0, 0, 0])
@@ -20,6 +26,7 @@ function RunnerScene({ calibrationData, customization }) {
   const [score, setScore] = useState(0)
   const [gameKey, setGameKey] = useState(0)
   const scoredObstaclesRef = useRef(new Set())
+  const lastSpawnTimeRef = useRef(0)
 
   // Reset game function - restarts game without going back to calibration
   const resetGame = () => {
@@ -29,8 +36,10 @@ function RunnerScene({ calibrationData, customization }) {
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
     scoredObstaclesRef.current.clear() // Reset scored obstacles tracking
+    // Set to past time so first log can spawn after FIRST_LOG_DELAY on restart
+    lastSpawnTimeRef.current = Date.now() - MIN_LOG_SPACING
     // Manually restart game speed after reset (since isLoading won't change)
-    setGameSpeed(0.075)
+    setGameSpeed(BASE_LOG_SPEED)
   }
 
   const { poses, isLoading } = usePose(videoRef)
@@ -79,7 +88,9 @@ function RunnerScene({ calibrationData, customization }) {
   // Start game
   useEffect(() => {
     if (!isLoading) {
-      setGameSpeed(0.075) // 25% faster - blocks move faster
+      setGameSpeed(BASE_LOG_SPEED) // Use centralized log speed constant
+      // Set to past time so first log can spawn after FIRST_LOG_DELAY without spacing restriction
+      lastSpawnTimeRef.current = Date.now() - MIN_LOG_SPACING
     }
   }, [isLoading])
 
@@ -88,26 +99,47 @@ function RunnerScene({ calibrationData, customization }) {
     playerPositionRef.current = pos
   }
 
-  // Spawn obstacles - slower and more spaced out
+  // Spawn obstacles - with minimum spacing enforcement
   useEffect(() => {
     if (gameSpeed === 0 || gameOver) return
 
     let spawnTimer
     const spawnObstacle = () => {
-      const baseSpawnRate = 5000 // 5 seconds base (more spacing between logs)
-      const difficultyMultiplier = Math.min(1 + gameSpeed * 5, 1.5) // Slower increase
-      const spawnRate = Math.max(baseSpawnRate / difficultyMultiplier, 3500) // Min 3.5 seconds (more spacing)
-
-      setObstacles(prev => [...prev, {
-        id: Date.now(),
-        z: -25, // Spawn much further back so player has more reaction time
-        x: 0 // Single lane
-      }])
+      const now = Date.now()
+      const timeSinceLastSpawn = now - lastSpawnTimeRef.current
       
-      spawnTimer = setTimeout(spawnObstacle, spawnRate)
+      // Calculate desired spawn rate with difficulty scaling
+      const baseSpawnRate = 5000 // 5 seconds base
+      const difficultyMultiplier = Math.min(1 + gameSpeed * 5, 1.5)
+      const desiredSpawnRate = baseSpawnRate / difficultyMultiplier
+      
+      // Strictly enforce minimum spacing - always wait at least MIN_LOG_SPACING
+      const spawnDelay = Math.max(MIN_LOG_SPACING - timeSinceLastSpawn, 0)
+
+      if (spawnDelay === 0) {
+        // Spawn now if enough time has passed
+        lastSpawnTimeRef.current = now
+        setObstacles(prev => [...prev, {
+          id: Date.now(),
+          z: -25, // Spawn much further back so player has more reaction time
+          x: 0 // Single lane
+        }])
+        spawnTimer = setTimeout(spawnObstacle, desiredSpawnRate)
+      } else {
+        // Wait for minimum spacing
+        spawnTimer = setTimeout(() => {
+          lastSpawnTimeRef.current = Date.now()
+          setObstacles(prev => [...prev, {
+            id: Date.now(),
+            z: -25,
+            x: 0
+          }])
+          spawnTimer = setTimeout(spawnObstacle, desiredSpawnRate)
+        }, spawnDelay)
+      }
     }
 
-    spawnTimer = setTimeout(spawnObstacle, 5000) // Start after 5 seconds
+    spawnTimer = setTimeout(spawnObstacle, FIRST_LOG_DELAY) // Reduced initial delay
 
     return () => {
       if (spawnTimer) clearTimeout(spawnTimer)
@@ -121,7 +153,7 @@ function RunnerScene({ calibrationData, customization }) {
     const moveInterval = setInterval(() => {
       setObstacles(prev => {
         const updated = prev.map(obs => {
-          const newZ = obs.z + gameSpeed
+          const newZ = obs.z + gameSpeed // Use centralized BASE_LOG_SPEED (via gameSpeed state)
           
           // Collision detection
           // Player: x=0±0.5, y varies (0 when grounded, up to ~1.5 when jumping), z=0
@@ -150,9 +182,12 @@ function RunnerScene({ calibrationData, customization }) {
           return { ...obs, z: newZ }
         })
         
-        // Remove obstacles that passed player (player is at z=26, remove when z > 27)
-        const passed = updated.filter(obs => obs.z > 27)
-        const remaining = updated.filter(obs => obs.z <= 27)
+        // Remove obstacles that passed player (player is at z=26)
+        // Despawn much further back so logs continue moving behind player
+        const playerZ = playerPositionRef.current[2] || 26
+        const despawnZ = playerZ + LOG_DESPAWN_DISTANCE
+        const passed = updated.filter(obs => obs.z > despawnZ)
+        const remaining = updated.filter(obs => obs.z <= despawnZ)
         if (passed.length > 0) {
           // Only score obstacles that haven't been scored yet (each log = exactly +1 point)
           const newlyPassed = passed.filter(obs => !scoredObstaclesRef.current.has(obs.id))
@@ -172,8 +207,9 @@ function RunnerScene({ calibrationData, customization }) {
   useEffect(() => {
     if (gameOver) return
     
+    const maxSpeed = BASE_LOG_SPEED * 1.5 // Cap at 1.5x base speed
     const difficultyInterval = setInterval(() => {
-      setGameSpeed(prev => Math.min(prev + 0.001, 0.1)) // Cap at 0.1 (higher since we start faster)
+      setGameSpeed(prev => Math.min(prev + 0.001, maxSpeed))
     }, 10000) // Increase every 10 seconds (slower)
 
     return () => clearInterval(difficultyInterval)

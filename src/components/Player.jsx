@@ -1,32 +1,29 @@
 import { useRef, useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 
+// Jump physics constants - easy to tune
+const JUMP_FORCE = 0.3 // Jump height - comfortable clearance (reduced from 0.9, between original 0.18 and too-high 0.9)
+const GRAVITY = -0.8 // Stronger gravity for snappier jump (was -0.5)
+
 function Player({ position, isJumping, customization, onPositionUpdate }) {
   const playerRef = useRef()
   const velocityY = useRef(0)
   const isGrounded = useRef(true)
   const prevJumping = useRef(false)
 
-  // Detect jump start (edge detection)
-  useEffect(() => {
-    // Jump on rising edge (false -> true) when grounded
-    if (isJumping && !prevJumping.current) {
-      if (isGrounded.current) {
-        velocityY.current = 0.3
-        isGrounded.current = false
-      }
-    }
-    
-    prevJumping.current = isJumping
-  }, [isJumping])
-
   useFrame(() => {
     if (!playerRef.current) return
 
-    const gravity = -0.5
+    // Detect jump start directly in useFrame for minimal latency (no useEffect delay)
+    // Jump on rising edge (false -> true) when grounded - check every frame
+    if (isJumping && !prevJumping.current && isGrounded.current) {
+      velocityY.current = JUMP_FORCE
+      isGrounded.current = false
+    }
+    prevJumping.current = isJumping
 
     // Apply gravity
-    velocityY.current += gravity * 0.016
+    velocityY.current += GRAVITY * 0.016
 
     // Update position
     const newY = playerRef.current.position.y + velocityY.current

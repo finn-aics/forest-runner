@@ -50,11 +50,11 @@ export function useJumpDetection(poses, baselineHipHeight = null) {
 
     const avgHipY = (leftHip.y + rightHip.y) / 2
 
-    // Smooth the hip height
+    // Minimal smoothing - prioritize maximum responsiveness (reduced from 0.5/0.5 to 0.3/0.7)
     if (smoothedHipHeightRef.current === null) {
       smoothedHipHeightRef.current = avgHipY
     } else {
-      smoothedHipHeightRef.current = smoothedHipHeightRef.current * 0.7 + avgHipY * 0.3
+      smoothedHipHeightRef.current = smoothedHipHeightRef.current * 0.3 + avgHipY * 0.7
     }
 
     setCurrentHipHeight(smoothedHipHeightRef.current)
@@ -74,12 +74,11 @@ export function useJumpDetection(poses, baselineHipHeight = null) {
     }
 
     // Detect jump: hip moves significantly above baseline (lower Y value = higher up)
-    // Require substantial movement - tighten threshold to avoid false positives
+    // Further reduced movement threshold for maximum responsiveness (was 25, now 15)
     if (jumpThresholdRef.current !== null && smoothedHipHeightRef.current !== null && baselineHipHeight !== null) {
-      // Only detect jump if hips move significantly above baseline (at least 45 pixels)
-      // This filters out casual movements, shrugs, and arm movements
+      // Detect jump if hips move above baseline - very low threshold for near-instant response
       const hipMovement = baselineHipHeight - smoothedHipHeightRef.current
-      const jumping = smoothedHipHeightRef.current < jumpThresholdRef.current && hipMovement >= 35
+      const jumping = smoothedHipHeightRef.current < jumpThresholdRef.current && hipMovement >= 15
       setIsJumping(jumping)
     } else {
       // Can't detect jumps without baseline threshold
