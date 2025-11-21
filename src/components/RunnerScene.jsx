@@ -27,10 +27,33 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
   const [score, setScore] = useState(0)
   const [gameKey, setGameKey] = useState(0)
   const scoredObstaclesRef = useRef(new Set())
-  const lastSpawnTimeRef = useRef(0)
+  const gameSpeedRef = useRef(0) // Track latest gameSpeed for spawn checks
+  const gameOverRef = useRef(false) // Track latest gameOver for spawn checks
+  
+  // Single deterministic spawn loop tracking
+  const nextSpawnTimeRef = useRef(null) // Time (ms) when next log should spawn
+  const lastSpawnTimeRef = useRef(0) // Time (ms) when last log spawned
+  const spawnLoopActiveRef = useRef(false) // Flag to ensure only one spawn loop
   
   // DEBUG MODE: Spacebar jump detection
   const [debugJumping, setDebugJumping] = useState(false)
+  
+  // Keep refs in sync with state
+  useEffect(() => {
+    gameSpeedRef.current = gameSpeed
+  }, [gameSpeed])
+  
+  useEffect(() => {
+    gameOverRef.current = gameOver
+  }, [gameOver])
+  
+  // Reset spawn tracking when starting a new run
+  const resetSpawnTracking = () => {
+    const now = Date.now()
+    lastSpawnTimeRef.current = now - MIN_LOG_SPACING // Allow first spawn after FIRST_LOG_DELAY
+    nextSpawnTimeRef.current = now + FIRST_LOG_DELAY // First spawn time
+    spawnLoopActiveRef.current = false // Mark loop as inactive so it can start fresh
+  }
 
   // Reset game function - restarts game without going back to calibration
   const resetGame = () => {
@@ -40,8 +63,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
     scoredObstaclesRef.current.clear() // Reset scored obstacles tracking
-    // Set to past time so first log can spawn after FIRST_LOG_DELAY on restart
-    lastSpawnTimeRef.current = Date.now() - MIN_LOG_SPACING
+    resetSpawnTracking() // Reset spawn tracking for new run
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(BASE_LOG_SPEED)
   }
@@ -121,13 +143,30 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     }
   }, [debugMode])
 
+  // Handle tab visibility changes - adjust spawn timing when tab visibility changes
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab became hidden - pause spawn tracking (loop will stop naturally)
+        spawnLoopActiveRef.current = false
+      } else if (gameSpeedRef.current > 0 && !gameOverRef.current) {
+        // Tab became visible - resume spawn tracking
+        resetSpawnTracking()
+      }
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
   // Start game
   useEffect(() => {
     // DEBUG MODE: Skip pose loading check, start immediately
     if (debugMode || !isLoading) {
       setGameSpeed(BASE_LOG_SPEED) // Use centralized log speed constant
-      // Set to past time so first log can spawn after FIRST_LOG_DELAY without spacing restriction
-      lastSpawnTimeRef.current = Date.now() - MIN_LOG_SPACING
+      resetSpawnTracking() // Initialize spawn tracking when game starts
     }
   }, [isLoading, debugMode])
 
@@ -136,63 +175,53 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     playerPositionRef.current = pos
   }
 
-  // Spawn obstacles - with minimum spacing enforcement
+  // Move obstacles, check collisions, and spawn logs (single deterministic loop)
   useEffect(() => {
-    if (gameSpeed === 0 || gameOver) return
-
-    let spawnTimer
-    const spawnObstacle = () => {
-      const now = Date.now()
-      const timeSinceLastSpawn = now - lastSpawnTimeRef.current
-      
-      // Calculate desired spawn rate with difficulty scaling
-      const baseSpawnRate = 5000 // 5 seconds base
-      const difficultyMultiplier = Math.min(1 + gameSpeed * 5, 1.5)
-      const desiredSpawnRate = baseSpawnRate / difficultyMultiplier
-      
-      // Enforce minimum spacing, then add randomness between MIN and MAX for variation
-      const minDelay = Math.max(MIN_LOG_SPACING - timeSinceLastSpawn, 0)
-      const randomExtra = minDelay === 0 ? Math.random() * (MAX_LOG_SPACING - MIN_LOG_SPACING) : 0
-      const spawnDelay = minDelay + randomExtra
-      
-      // Calculate next spawn time with random spacing
-      const nextSpawnGap = MIN_LOG_SPACING + Math.random() * (MAX_LOG_SPACING - MIN_LOG_SPACING)
-
-      if (spawnDelay === 0) {
-        // Spawn now if enough time has passed
-        lastSpawnTimeRef.current = now
-        setObstacles(prev => [...prev, {
-          id: Date.now(),
-          z: -25, // Spawn much further back so player has more reaction time
-          x: 0 // Single lane
-        }])
-        spawnTimer = setTimeout(spawnObstacle, nextSpawnGap)
-      } else {
-        // Wait for minimum spacing
-        spawnTimer = setTimeout(() => {
-          lastSpawnTimeRef.current = Date.now()
-          setObstacles(prev => [...prev, {
-            id: Date.now(),
-            z: -25,
-            x: 0
-          }])
-          spawnTimer = setTimeout(spawnObstacle, nextSpawnGap)
-        }, spawnDelay)
-      }
+    if (gameSpeed === 0 || gameOver) {
+      spawnLoopActiveRef.current = false // Stop spawn loop
+      return
     }
-
-    spawnTimer = setTimeout(spawnObstacle, FIRST_LOG_DELAY) // Reduced initial delay
-
-    return () => {
-      if (spawnTimer) clearTimeout(spawnTimer)
+    
+    // Safety check: ensure only one spawn loop is active
+    if (spawnLoopActiveRef.current) {
+      // Loop already active, reset and start fresh
+      resetSpawnTracking()
     }
-  }, [gameSpeed, gameOver])
-
-  // Move obstacles and check collisions
-  useEffect(() => {
-    if (gameSpeed === 0 || gameOver) return
+    spawnLoopActiveRef.current = true
 
     const moveInterval = setInterval(() => {
+      // Safety check: stop if game ended or speed is 0
+      if (gameSpeedRef.current === 0 || gameOverRef.current) {
+        spawnLoopActiveRef.current = false
+        return
+      }
+      
+      const now = Date.now()
+      
+      // Spawn logic: check if it's time to spawn a new log
+      if (nextSpawnTimeRef.current !== null && now >= nextSpawnTimeRef.current) {
+        // Calculate time since last spawn for spacing enforcement
+        const timeSinceLastSpawn = now - lastSpawnTimeRef.current
+        
+        // Enforce minimum spacing
+        if (timeSinceLastSpawn >= MIN_LOG_SPACING) {
+          // Spawn a new log
+          lastSpawnTimeRef.current = now
+          setObstacles(prev => [...prev, {
+            id: Date.now(),
+            z: -25, // Spawn much further back so player has more reaction time
+            x: 0 // Single lane
+          }])
+          
+          // Calculate next spawn time with random spacing (MIN to MAX)
+          const nextSpawnGap = MIN_LOG_SPACING + Math.random() * (MAX_LOG_SPACING - MIN_LOG_SPACING)
+          nextSpawnTimeRef.current = now + nextSpawnGap
+        } else {
+          // Not enough time passed, schedule spawn after minimum spacing
+          nextSpawnTimeRef.current = lastSpawnTimeRef.current + MIN_LOG_SPACING
+        }
+      }
+      
       setObstacles(prev => {
         const updated = prev.map(obs => {
           const newZ = obs.z + gameSpeed // Use centralized BASE_LOG_SPEED (via gameSpeed state)
@@ -239,7 +268,10 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
       })
     }, 16) // ~60fps
 
-    return () => clearInterval(moveInterval)
+    return () => {
+      clearInterval(moveInterval)
+      spawnLoopActiveRef.current = false // Mark loop as inactive when cleanup runs
+    }
   }, [gameSpeed, gameOver])
 
   // Increase difficulty (spawn rate, not speed) - slower increase
