@@ -12,11 +12,12 @@ import { useJumpDetection } from '../hooks/useJumpDetection'
 
 // Game constants - easy to tune difficulty
 const BASE_LOG_SPEED = 0.12 // Centralized log speed (increased from 0.075)
-const MIN_LOG_SPACING = 1800 // Minimum time between logs (ms) - strictly enforced (reduced from 4000)
+const MIN_LOG_SPACING = 1800 // Minimum time between logs (ms) - prevents overlap
+const MAX_LOG_SPACING = 3000 // Maximum time between logs (ms) - adds variation
 const FIRST_LOG_DELAY = 500 // Delay before first log appears (reduced from 2000 - almost immediate)
 const LOG_DESPAWN_DISTANCE = 15 // Distance behind player before log despawns (increased from ~1)
 
-function RunnerScene({ calibrationData, customization }) {
+function RunnerScene({ calibrationData, customization, debugMode = false }) {
   const videoRef = useRef(null)
   const playerPositionRef = useRef([0, 0, 0])
   const [obstacles, setObstacles] = useState([])
@@ -27,6 +28,9 @@ function RunnerScene({ calibrationData, customization }) {
   const [gameKey, setGameKey] = useState(0)
   const scoredObstaclesRef = useRef(new Set())
   const lastSpawnTimeRef = useRef(0)
+  
+  // DEBUG MODE: Spacebar jump detection
+  const [debugJumping, setDebugJumping] = useState(false)
 
   // Reset game function - restarts game without going back to calibration
   const resetGame = () => {
@@ -43,13 +47,45 @@ function RunnerScene({ calibrationData, customization }) {
   }
 
   const { poses, isLoading } = usePose(videoRef)
-  const { isJumping } = useJumpDetection(
+  const { isJumping: poseJumping } = useJumpDetection(
     poses, 
     calibrationData?.baselineHipHeight ?? null
   )
-
-  // Start webcam for game
+  
+  // DEBUG MODE: Use spacebar instead of pose detection
+  const isJumping = debugMode ? debugJumping : poseJumping
+  
+  // DEBUG MODE: Up Arrow keyboard listener
   useEffect(() => {
+    if (!debugMode) return
+    
+    const handleKeyDown = (e) => {
+      if (e.code === 'ArrowUp' && !gameOver) {
+        e.preventDefault()
+        setDebugJumping(true)
+      }
+    }
+    
+    const handleKeyUp = (e) => {
+      if (e.code === 'ArrowUp') {
+        e.preventDefault()
+        setDebugJumping(false)
+      }
+    }
+    
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [debugMode, gameOver])
+
+  // Start webcam for game (skip in DEBUG MODE)
+  useEffect(() => {
+    if (debugMode) return // DEBUG MODE: Skip webcam when using spacebar
+    
     async function startWebcam() {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({ 
@@ -83,16 +119,17 @@ function RunnerScene({ calibrationData, customization }) {
         stream.getTracks().forEach(track => track.stop())
       }
     }
-  }, [])
+  }, [debugMode])
 
   // Start game
   useEffect(() => {
-    if (!isLoading) {
+    // DEBUG MODE: Skip pose loading check, start immediately
+    if (debugMode || !isLoading) {
       setGameSpeed(BASE_LOG_SPEED) // Use centralized log speed constant
       // Set to past time so first log can spawn after FIRST_LOG_DELAY without spacing restriction
       lastSpawnTimeRef.current = Date.now() - MIN_LOG_SPACING
     }
-  }, [isLoading])
+  }, [isLoading, debugMode])
 
   // Get player position for collision detection
   const updatePlayerPosition = (pos) => {
@@ -113,8 +150,13 @@ function RunnerScene({ calibrationData, customization }) {
       const difficultyMultiplier = Math.min(1 + gameSpeed * 5, 1.5)
       const desiredSpawnRate = baseSpawnRate / difficultyMultiplier
       
-      // Strictly enforce minimum spacing - always wait at least MIN_LOG_SPACING
-      const spawnDelay = Math.max(MIN_LOG_SPACING - timeSinceLastSpawn, 0)
+      // Enforce minimum spacing, then add randomness between MIN and MAX for variation
+      const minDelay = Math.max(MIN_LOG_SPACING - timeSinceLastSpawn, 0)
+      const randomExtra = minDelay === 0 ? Math.random() * (MAX_LOG_SPACING - MIN_LOG_SPACING) : 0
+      const spawnDelay = minDelay + randomExtra
+      
+      // Calculate next spawn time with random spacing
+      const nextSpawnGap = MIN_LOG_SPACING + Math.random() * (MAX_LOG_SPACING - MIN_LOG_SPACING)
 
       if (spawnDelay === 0) {
         // Spawn now if enough time has passed
@@ -124,7 +166,7 @@ function RunnerScene({ calibrationData, customization }) {
           z: -25, // Spawn much further back so player has more reaction time
           x: 0 // Single lane
         }])
-        spawnTimer = setTimeout(spawnObstacle, desiredSpawnRate)
+        spawnTimer = setTimeout(spawnObstacle, nextSpawnGap)
       } else {
         // Wait for minimum spacing
         spawnTimer = setTimeout(() => {
@@ -134,7 +176,7 @@ function RunnerScene({ calibrationData, customization }) {
             z: -25,
             x: 0
           }])
-          spawnTimer = setTimeout(spawnObstacle, desiredSpawnRate)
+          spawnTimer = setTimeout(spawnObstacle, nextSpawnGap)
         }, spawnDelay)
       }
     }
@@ -182,20 +224,17 @@ function RunnerScene({ calibrationData, customization }) {
           return { ...obs, z: newZ }
         })
         
-        // Remove obstacles that passed player (player is at z=26)
-        // Despawn much further back so logs continue moving behind player
+        // Score obstacles that passed player (when log Z > player Z)
         const playerZ = playerPositionRef.current[2] || 26
-        const despawnZ = playerZ + LOG_DESPAWN_DISTANCE
-        const passed = updated.filter(obs => obs.z > despawnZ)
-        const remaining = updated.filter(obs => obs.z <= despawnZ)
-        if (passed.length > 0) {
-          // Only score obstacles that haven't been scored yet (each log = exactly +1 point)
-          const newlyPassed = passed.filter(obs => !scoredObstaclesRef.current.has(obs.id))
-          newlyPassed.forEach(obs => scoredObstaclesRef.current.add(obs.id))
-          if (newlyPassed.length > 0) {
-            setScore(prev => prev + newlyPassed.length)
-          }
+        const scored = updated.filter(obs => obs.z > playerZ && !scoredObstaclesRef.current.has(obs.id))
+        if (scored.length > 0) {
+          scored.forEach(obs => scoredObstaclesRef.current.add(obs.id))
+          setScore(prev => prev + scored.length)
         }
+        
+        // Remove obstacles that passed despawn distance (player is at z=26, despawn at z=26+15=41)
+        const despawnZ = playerZ + LOG_DESPAWN_DISTANCE
+        const remaining = updated.filter(obs => obs.z <= despawnZ)
         return remaining
       })
     }, 16) // ~60fps
