@@ -76,14 +76,15 @@ function CalibrationPanel({ onComplete }) {
   useEffect(() => {
     if (countdown === null || countdown === 0) return
 
-    if (countdown === 1) {
-      setStep(1)
-      setCountdown(null)
-      return
-    }
-
     const timer = setTimeout(() => {
-      setCountdown(countdown - 1)
+      if (countdown === 1) {
+        // After showing "1" for 1 second, start calibration
+        setStep(1)
+        setCountdown(null)
+      } else {
+        // Decrement countdown
+        setCountdown(countdown - 1)
+      }
     }, 1000)
 
     return () => clearTimeout(timer)

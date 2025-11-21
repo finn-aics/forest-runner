@@ -19,6 +19,7 @@ function RunnerScene({ calibrationData, customization }) {
   const [gameOver, setGameOver] = useState(false)
   const [score, setScore] = useState(0)
   const [gameKey, setGameKey] = useState(0)
+  const scoredObstaclesRef = useRef(new Set())
 
   // Reset game function - restarts game without going back to calibration
   const resetGame = () => {
@@ -27,6 +28,7 @@ function RunnerScene({ calibrationData, customization }) {
     setGameOver(false)
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
+    scoredObstaclesRef.current.clear() // Reset scored obstacles tracking
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(0.075)
   }
@@ -152,7 +154,12 @@ function RunnerScene({ calibrationData, customization }) {
         const passed = updated.filter(obs => obs.z > 27)
         const remaining = updated.filter(obs => obs.z <= 27)
         if (passed.length > 0) {
-          setScore(prev => prev + passed.length)
+          // Only score obstacles that haven't been scored yet (each log = exactly +1 point)
+          const newlyPassed = passed.filter(obs => !scoredObstaclesRef.current.has(obs.id))
+          newlyPassed.forEach(obs => scoredObstaclesRef.current.add(obs.id))
+          if (newlyPassed.length > 0) {
+            setScore(prev => prev + newlyPassed.length)
+          }
         }
         return remaining
       })
