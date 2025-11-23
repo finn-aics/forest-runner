@@ -62,6 +62,19 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     playerStateRef.current = playerState // Keep playerState ref in sync for tumble speed
   }, [playerState])
   
+  // Helper function to award score for a log (single point of score increase)
+  function awardScoreForObstacle(id) {
+    // If this log ever hit the player, it should NEVER give score.
+    if (hitObstaclesRef.current.has(id)) return
+
+    // If it already gave score once, don't give it again.
+    if (scoredObstaclesRef.current.has(id)) return
+
+    // Mark as scored and set score based on how many clean logs we've scored so far.
+    scoredObstaclesRef.current.add(id)
+    setScore(scoredObstaclesRef.current.size)
+  }
+
   // Reset spawn tracking when starting a new run
   const resetSpawnTracking = () => {
     const now = Date.now()
@@ -76,6 +89,9 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     setObstacles([])
     // Stop spawn loop to prevent duplicate intervals
     spawnLoopActiveRef.current = false
+    // Reset scoring: clear refs and score
+    hitObstaclesRef.current.clear()
+    scoredObstaclesRef.current.clear()
     setScore(0)
     setGameOver(false)
     setHearts(3) // Reset hearts to 3
@@ -83,8 +99,6 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     setPlayerState('running') // Reset to running state
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
-    scoredObstaclesRef.current.clear() // Reset scored obstacles tracking
-    hitObstaclesRef.current.clear() // Reset hit obstacles tracking
     wasCollidingRef.current = false // Reset collision state for edge detection
     resetSpawnTracking() // Reset spawn tracking for new run
     // Manually restart game speed after reset (since isLoading won't change)
@@ -310,7 +324,9 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
             return [...prev, {
               id: Date.now(),
               z: spawnZ, // Spawn much further back so player has more reaction time
-              x: 0 // Single lane
+              x: 0, // Single lane
+              hasHitPlayer: false, // Track if this log has hit the player (prevents scoring)
+              hasPassedPlayer: false // Track if this log has passed the player (for scoring)
             }]
           })
           
@@ -339,8 +355,15 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         // If we're in tumble, skip all collision processing (player is invincible during tumble)
         const isInTumble = playerStateRef.current === 'tumbling'
         
+        // Get player position for collision detection and scoring
+        const playerZ = playerPositionRef.current[2] || 26
+        
         const updated = prev.map(obs => {
           const newZ = obs.z + effectiveSpeed // Use effective speed (slower during tumble)
+          
+          // Check if obstacle has passed player (for scoring)
+          const hasPassed = newZ > playerZ
+          const newHasPassed = hasPassed || obs.hasPassedPlayer || false
           
           // Collision detection
           // Player: x=0±0.5, y varies (0 when grounded, up to ~1.5 when jumping), z=0
@@ -348,7 +371,6 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
           const playerPos = playerPositionRef.current
           const playerX = playerPos[0]
           const playerY = playerPos[1] // Height above ground
-          const playerZ = playerPos[2] || 26 // Player is at z=26
           
           // Check X overlap (lateral collision) - log is wider now (radius 1.5)
           const xOverlap = Math.abs(obs.x - playerX) < 1.8
@@ -372,7 +394,11 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
             hitObstaclesRef.current.add(obs.id)
           }
           
-          return { ...obs, z: newZ }
+          return { 
+            ...obs, 
+            z: newZ,
+            hasPassedPlayer: newHasPassed // Track if this log has ever passed the player
+          }
         })
         
         // EDGE DETECTION: Only trigger hit on collision ENTER (was NOT colliding, now IS colliding)
@@ -382,6 +408,24 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         // Process collision only on ENTER edge (prevents double hits from same log or overlapping logs)
         // CRITICAL: Double-check we're not in tumble before processing (defense in depth)
         if (collisionEnter && collisionObsId !== null && !isInTumble && playerStateRef.current === 'running') {
+          // Mark the colliding obstacle as having hit the player (prevents scoring)
+          const hitObsIndex = updated.findIndex(obs => obs.id === collisionObsId)
+          if (hitObsIndex !== -1) {
+            updated[hitObsIndex] = { ...updated[hitObsIndex], hasHitPlayer: true }
+            // Add to hitObstaclesRef to prevent scoring (persistent tracking)
+            hitObstaclesRef.current.add(collisionObsId)
+            
+            // DEBUG: Log when hit actually counts
+            const hitObs = updated[hitObsIndex]
+            const playerZ = playerPositionRef.current[2] || 26
+            console.log("HIT", {
+              id: hitObs.id,
+              playerZ,
+              obsZ: hitObs.z,
+              inHitSet: hitObstaclesRef.current.has(hitObs.id),
+            })
+          }
+          
           const currentHearts = heartsRef.current
           
           if (currentHearts > 1) {
@@ -403,13 +447,17 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         // Update collision state for next frame (edge detection)
         wasCollidingRef.current = isCurrentlyColliding
         
-        // Score obstacles that passed player (when log Z > player Z)
-        const playerZ = playerPositionRef.current[2] || 26
-        const scored = updated.filter(obs => obs.z > playerZ && !scoredObstaclesRef.current.has(obs.id))
-        if (scored.length > 0) {
-          scored.forEach(obs => scoredObstaclesRef.current.add(obs.id))
-          setScore(prev => prev + scored.length)
-        }
+        // Award score for logs that passed the player cleanly
+        // (playerZ is already defined above in this scope)
+        updated.forEach(obs => {
+          // Check if log has passed the player
+          const hasPassedPlayer = obs.z > playerZ
+          
+          // If log has passed player, award score (helper handles all checks)
+          if (hasPassedPlayer) {
+            awardScoreForObstacle(obs.id)
+          }
+        })
         
         // Remove obstacles that passed despawn distance (player is at z=26, despawn at z=26+15=41)
         const despawnZ = playerZ + LOG_DESPAWN_DISTANCE
