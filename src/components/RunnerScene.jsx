@@ -16,6 +16,7 @@ const MIN_LOG_SPACING = 1800 // Minimum time between logs (ms) - prevents overla
 const MAX_LOG_SPACING = 3000 // Maximum time between logs (ms) - adds variation
 const FIRST_LOG_DELAY = 500 // Delay before first log appears (reduced from 2000 - almost immediate)
 const LOG_DESPAWN_DISTANCE = 15 // Distance behind player before log despawns (increased from ~1)
+const MIN_LOG_DISTANCE_Z = 8 // Minimum distance along Z axis between logs (prevents clumping)
 
 function RunnerScene({ calibrationData, customization, debugMode = false, cameraEnabled = false }) {
   const videoRef = useRef(null)
@@ -71,7 +72,10 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
 
   // Reset game function - restarts game without going back to calibration
   const resetGame = () => {
+    // CRITICAL: Clear obstacles FIRST to ensure no logs linger from previous run
     setObstacles([])
+    // Stop spawn loop to prevent duplicate intervals
+    spawnLoopActiveRef.current = false
     setScore(0)
     setGameOver(false)
     setHearts(3) // Reset hearts to 3
@@ -90,7 +94,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   // Tumble state handler - enters tumble state after hit, exits after duration
   useEffect(() => {
     if (playerState === 'tumbling') {
-      const tumbleDuration = 600 // 600ms of tumble (reduced from 1500)
+      const tumbleDuration = 1500 // 1500ms of tumble (reduced from 3000)
       const tumbleTimer = setTimeout(() => {
         setPlayerState('running') // Return to running after tumble
         // Clear hit obstacles when tumble ends so new obstacles can hit
@@ -288,19 +292,26 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
           // Check existing obstacles before spawning (prevent overlap)
           // Access current obstacles to check for overlap
           setObstacles(prev => {
-            // Check if any existing log is too close to spawn position (check all logs, not just at spawnZ)
-            const tooClose = prev.some(obs => Math.abs(obs.z - spawnZ) < minLogDistance)
+            // Find the last (furthest back) obstacle to check spacing
+            const lastObstacle = prev.length > 0 ? prev.reduce((last, obs) => 
+              obs.z < last.z ? obs : last
+            ) : null
             
-            if (!tooClose) {
-              // Spawn a new log only if no overlapping logs
-              return [...prev, {
-                id: Date.now(),
-                z: spawnZ, // Spawn much further back so player has more reaction time
-                x: 0 // Single lane
-              }]
+            // If there's a last obstacle, check distance along Z axis
+            if (lastObstacle !== null) {
+              const zDistance = Math.abs(spawnZ - lastObstacle.z)
+              if (zDistance < MIN_LOG_DISTANCE_Z) {
+                // Too close to last obstacle, skip spawning this tick
+                return prev
+              }
             }
-            // Skip spawn if too close to existing log
-            return prev
+            
+            // Spawn a new log only if spacing is OK
+            return [...prev, {
+              id: Date.now(),
+              z: spawnZ, // Spawn much further back so player has more reaction time
+              x: 0 // Single lane
+            }]
           })
           
           // Update spawn time after spawn attempt (whether successful or not)
