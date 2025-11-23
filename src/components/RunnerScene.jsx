@@ -32,6 +32,9 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
   const hitObstaclesRef = useRef(new Set()) // Track obstacles that have already hit the player
   const gameSpeedRef = useRef(0) // Track latest gameSpeed for spawn checks
   const gameOverRef = useRef(false) // Track latest gameOver for spawn checks
+  const heartsRef = useRef(3) // Track latest hearts value for tumble cleanup
+  const playerStateRef = useRef('running') // Track latest playerState for tumble speed calculation
+  const wasCollidingRef = useRef(false) // Track if player was colliding in previous frame (edge detection)
   
   // Single deterministic spawn loop tracking
   const nextSpawnTimeRef = useRef(null) // Time (ms) when next log should spawn
@@ -50,6 +53,14 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     gameOverRef.current = gameOver
   }, [gameOver])
   
+  useEffect(() => {
+    heartsRef.current = hearts // Keep hearts ref in sync
+  }, [hearts])
+  
+  useEffect(() => {
+    playerStateRef.current = playerState // Keep playerState ref in sync for tumble speed
+  }, [playerState])
+  
   // Reset spawn tracking when starting a new run
   const resetSpawnTracking = () => {
     const now = Date.now()
@@ -64,11 +75,13 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     setScore(0)
     setGameOver(false)
     setHearts(3) // Reset hearts to 3
+    heartsRef.current = 3 // Reset hearts ref
     setPlayerState('running') // Reset to running state
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
     scoredObstaclesRef.current.clear() // Reset scored obstacles tracking
     hitObstaclesRef.current.clear() // Reset hit obstacles tracking
+    wasCollidingRef.current = false // Reset collision state for edge detection
     resetSpawnTracking() // Reset spawn tracking for new run
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(BASE_LOG_SPEED)
@@ -77,9 +90,14 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
   // Tumble state handler - enters tumble state after hit, exits after duration
   useEffect(() => {
     if (playerState === 'tumbling') {
-      const tumbleDuration = 1500 // 1.5 seconds of tumble
+      const tumbleDuration = 600 // 600ms of tumble (reduced from 1500)
       const tumbleTimer = setTimeout(() => {
         setPlayerState('running') // Return to running after tumble
+        // Clear hit obstacles when tumble ends so new obstacles can hit
+        // This allows the next hit to be processed (including game over hit when hearts === 0)
+        hitObstaclesRef.current.clear()
+        // Reset collision state so player can be hit again after separating from logs
+        wasCollidingRef.current = false
       }, tumbleDuration)
       
       return () => clearTimeout(tumbleTimer)
@@ -225,14 +243,31 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
         
         // Enforce minimum spacing
         if (timeSinceLastSpawn >= MIN_LOG_SPACING) {
-          // Spawn a new log
-          lastSpawnTimeRef.current = now
-          setObstacles(prev => [...prev, {
-            id: Date.now(),
-            z: -25, // Spawn much further back so player has more reaction time
-            x: 0 // Single lane
-          }])
+          // Check if there's already a log too close to spawn position
+          const spawnZ = -25
+          const minLogDistance = 3 // Minimum distance between logs (prevent overlap)
           
+          // Check existing obstacles before spawning (prevent overlap)
+          // Access current obstacles to check for overlap
+          setObstacles(prev => {
+            // Check if any existing log is too close to spawn position (check all logs, not just at spawnZ)
+            const tooClose = prev.some(obs => Math.abs(obs.z - spawnZ) < minLogDistance)
+            
+            if (!tooClose) {
+              // Spawn a new log only if no overlapping logs
+              return [...prev, {
+                id: Date.now(),
+                z: spawnZ, // Spawn much further back so player has more reaction time
+                x: 0 // Single lane
+              }]
+            }
+            // Skip spawn if too close to existing log
+            return prev
+          })
+          
+          // Update spawn time after spawn attempt (whether successful or not)
+          // This prevents rapid retries and ensures proper spacing
+          lastSpawnTimeRef.current = now
           // Calculate next spawn time with random spacing (MIN to MAX)
           const nextSpawnGap = MIN_LOG_SPACING + Math.random() * (MAX_LOG_SPACING - MIN_LOG_SPACING)
           nextSpawnTimeRef.current = now + nextSpawnGap
@@ -243,8 +278,20 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
       }
       
       setObstacles(prev => {
+        // Calculate effective game speed - slower during tumble (logs move slower)
+        // Use ref to get current playerState (avoids stale closure)
+        const effectiveSpeed = playerStateRef.current === 'tumbling' ? gameSpeed * 0.4 : gameSpeed
+        
+        // Edge-detection based collision: only trigger on collision ENTER, not while overlapping
+        let isCurrentlyColliding = false
+        let collisionObsId = null
+        
+        // CRITICAL: Check playerState BEFORE processing collisions to prevent double-hits
+        // If we're in tumble, skip all collision processing (player is invincible during tumble)
+        const isInTumble = playerStateRef.current === 'tumbling'
+        
         const updated = prev.map(obs => {
-          const newZ = obs.z + gameSpeed // Use centralized BASE_LOG_SPEED (via gameSpeed state)
+          const newZ = obs.z + effectiveSpeed // Use effective speed (slower during tumble)
           
           // Collision detection
           // Player: x=0±0.5, y varies (0 when grounded, up to ~1.5 when jumping), z=0
@@ -254,8 +301,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
           const playerY = playerPos[1] // Height above ground
           const playerZ = playerPos[2] || 26 // Player is at z=26
           
-          // Check X overlap (lateral collision) - log is narrower now (radius 0.5)
-          const xOverlap = Math.abs(obs.x - playerX) < 0.8
+          // Check X overlap (lateral collision) - log is wider now (radius 1.5)
+          const xOverlap = Math.abs(obs.x - playerX) < 1.8
           // Check Z overlap (depth collision) - obstacle is approaching from negative z
           // Log is shallower now (height 1.5, rotated), adjust collision zone
           // Player is at z=26, so check overlap relative to that
@@ -265,27 +312,47 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
           // Log top is roughly at y=1.25 (0.5 + radius 0.75), player is safe if y > 1.3
           const yCollision = playerY < 1.3
           
+          // Check if currently colliding with this obstacle
           if (xOverlap && zOverlap && yCollision) {
-            // Collision detected! Handle lives/tumble system
-            // Only process collision if this obstacle hasn't hit the player yet
-            if (!hitObstaclesRef.current.has(obs.id) && playerState === 'running') {
-              hitObstaclesRef.current.add(obs.id) // Mark this obstacle as hit
-              
-              if (hearts > 1) {
-                // Player has hearts remaining - lose one and enter tumble
-                setHearts(prev => prev - 1)
-                setPlayerState('tumbling') // Enter tumble state (prevents jumping)
-              } else if (hearts === 1) {
-                // Last heart - lose it and game over
-                setHearts(0)
-                setGameOver(true)
-                setPlayerState('gameOver')
-              }
+            isCurrentlyColliding = true
+            // Track the first colliding obstacle ID for hit processing
+            if (collisionObsId === null) {
+              collisionObsId = obs.id
             }
+            // Mark ALL overlapping obstacles as hit to prevent processing them again
+            hitObstaclesRef.current.add(obs.id)
           }
           
           return { ...obs, z: newZ }
         })
+        
+        // EDGE DETECTION: Only trigger hit on collision ENTER (was NOT colliding, now IS colliding)
+        // This prevents multiple hearts lost from the same log as player stays overlapping
+        const collisionEnter = isCurrentlyColliding && !wasCollidingRef.current
+        
+        // Process collision only on ENTER edge (prevents double hits from same log or overlapping logs)
+        // CRITICAL: Double-check we're not in tumble before processing (defense in depth)
+        if (collisionEnter && collisionObsId !== null && !isInTumble && playerStateRef.current === 'running') {
+          const currentHearts = heartsRef.current
+          
+          if (currentHearts > 1) {
+            // Player has hearts remaining - lose one and enter tumble
+            setHearts(prev => prev - 1)
+            setPlayerState('tumbling') // Enter tumble state (prevents jumping and further collisions)
+          } else if (currentHearts === 1) {
+            // Last heart - lose it and immediately trigger game over (no tumble)
+            setHearts(0)
+            setGameOver(true)
+            setPlayerState('gameOver')
+          } else if (currentHearts === 0) {
+            // Safety check: if somehow we hit with 0 hearts, trigger game over
+            setGameOver(true)
+            setPlayerState('gameOver')
+          }
+        }
+        
+        // Update collision state for next frame (edge detection)
+        wasCollidingRef.current = isCurrentlyColliding
         
         // Score obstacles that passed player (when log Z > player Z)
         const playerZ = playerPositionRef.current[2] || 26
@@ -306,7 +373,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
       clearInterval(moveInterval)
       spawnLoopActiveRef.current = false // Mark loop as inactive when cleanup runs
     }
-  }, [gameSpeed, gameOver])
+  }, [gameSpeed, gameOver, playerState]) // Include playerState to recalculate effectiveSpeed when tumble state changes
 
   // Increase difficulty (spawn rate, not speed) - slower increase
   useEffect(() => {
@@ -435,7 +502,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
         </mesh>
 
         {/* Player - positioned at z=26 */}
-        <Player position={26} isJumping={isJumping} customization={customization} onPositionUpdate={updatePlayerPosition} />
+        <Player position={26} isJumping={isJumping} playerState={playerState} customization={customization} onPositionUpdate={updatePlayerPosition} />
 
         {/* Obstacles - logs positioned slightly lower to match shallower height */}
         {obstacles.map(obs => (
