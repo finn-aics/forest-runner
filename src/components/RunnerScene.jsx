@@ -17,7 +17,7 @@ const MAX_LOG_SPACING = 3000 // Maximum time between logs (ms) - adds variation
 const FIRST_LOG_DELAY = 500 // Delay before first log appears (reduced from 2000 - almost immediate)
 const LOG_DESPAWN_DISTANCE = 15 // Distance behind player before log despawns (increased from ~1)
 
-function RunnerScene({ calibrationData, customization, debugMode = false }) {
+function RunnerScene({ calibrationData, customization, debugMode = false, cameraEnabled = false }) {
   const videoRef = useRef(null)
   const playerPositionRef = useRef([0, 0, 0])
   const [obstacles, setObstacles] = useState([])
@@ -104,14 +104,14 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     }
   }, [playerState])
 
-  const { poses, isLoading } = usePose(videoRef)
+  const { poses, isLoading } = usePose(videoRef, cameraEnabled && !debugMode)
   const { isJumping: poseJumping } = useJumpDetection(
     poses, 
     calibrationData?.baselineHipHeight ?? null
   )
   
-  // DEBUG MODE: Use spacebar instead of pose detection
-  const rawIsJumping = debugMode ? debugJumping : poseJumping
+  // DEBUG MODE: Use Up Arrow instead of pose detection (or if camera is disabled)
+  const rawIsJumping = (debugMode || !cameraEnabled) ? debugJumping : poseJumping
   // Prevent jumping during tumble state
   const isJumping = playerState === 'running' ? rawIsJumping : false
   
@@ -142,17 +142,51 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
     }
   }, [debugMode, gameOver])
 
-  // Start webcam for game (skip in DEBUG MODE)
+  // Start/stop webcam for game (skip in DEBUG MODE or if camera is disabled)
+  // Use ref to track stream to avoid dependency loop
+  const streamRef = useRef(null)
+  
   useEffect(() => {
-    if (debugMode) return // DEBUG MODE: Skip webcam when using spacebar
+    // Store stream in ref for cleanup
+    streamRef.current = stream
+  }, [stream])
+  
+  useEffect(() => {
+    if (debugMode || !cameraEnabled) {
+      // DEBUG MODE or camera OFF: Stop all tracks and clear video
+      const currentStream = streamRef.current
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop())
+        setStream(null)
+        streamRef.current = null
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null
+      }
+      return
+    }
     
+    // Prevent multiple starts - check if stream already exists
+    if (streamRef.current) {
+      return // Already have a stream, don't start again
+    }
+    
+    // Camera is ON and not in debug mode - start webcam (only once)
     async function startWebcam() {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: 'user', width: 640, height: 480 } 
         })
+        
+        // Check if camera was disabled while waiting for permission
+        if (debugMode || !cameraEnabled || streamRef.current) {
+          mediaStream.getTracks().forEach(track => track.stop())
+          return
+        }
+        
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream
+          streamRef.current = mediaStream
           setStream(mediaStream)
           
           // Wait for video to be ready before pose detection starts
@@ -170,16 +204,20 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
         }
       } catch (error) {
         console.error('Error accessing webcam:', error)
+        streamRef.current = null
       }
     }
     startWebcam()
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop())
+      // Cleanup: stop all tracks when component unmounts or camera is toggled off
+      const currentStream = streamRef.current
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop())
+        streamRef.current = null
       }
     }
-  }, [debugMode])
+  }, [debugMode, cameraEnabled]) // Removed stream from dependencies to prevent loop
 
   // Handle tab visibility changes - adjust spawn timing when tab visibility changes
   useEffect(() => {
@@ -201,12 +239,12 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
 
   // Start game
   useEffect(() => {
-    // DEBUG MODE: Skip pose loading check, start immediately
-    if (debugMode || !isLoading) {
+    // DEBUG MODE or camera OFF: Skip pose loading check, start immediately
+    if (debugMode || !cameraEnabled || !isLoading) {
       setGameSpeed(BASE_LOG_SPEED) // Use centralized log speed constant
       resetSpawnTracking() // Initialize spawn tracking when game starts
     }
-  }, [isLoading, debugMode])
+  }, [isLoading, debugMode, cameraEnabled])
 
   // Get player position for collision detection
   const updatePlayerPosition = (pos) => {
@@ -433,6 +471,27 @@ function RunnerScene({ calibrationData, customization, debugMode = false }) {
         </div>
       )}
 
+      {/* Camera OFF Message */}
+      {!cameraEnabled && !debugMode && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          color: '#ff6b6b',
+          fontSize: '1.5em',
+          fontWeight: 'bold',
+          zIndex: 1000,
+          textShadow: '2px 2px 4px rgba(0,0,0,0.8)',
+          background: 'rgba(0,0,0,0.7)',
+          padding: '20px',
+          borderRadius: '10px',
+          textAlign: 'center'
+        }}>
+          Camera is off. Turn it on to play.
+        </div>
+      )}
+      
       {/* Score Display */}
       <div style={{
         position: 'absolute',

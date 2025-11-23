@@ -6,7 +6,7 @@ import { useJumpDetection } from '../hooks/useJumpDetection'
 // are saved, uploaded, cached, or stored anywhere. Video stream is only displayed
 // in the browser and processed frame-by-frame, then immediately discarded.
 
-function CalibrationPanel({ onComplete }) {
+function CalibrationPanel({ cameraEnabled, onComplete }) {
   const videoRef = useRef(null)
   const [step, setStep] = useState(0) // 0 = waiting for start, 1 = standing, 2 = jumping
   const [baselineHipHeight, setBaselineHipHeight] = useState(null)
@@ -16,20 +16,57 @@ function CalibrationPanel({ onComplete }) {
   const prevJumping = useRef(false)
   const [countdown, setCountdown] = useState(null)
 
-  const { poses, isLoading } = usePose(videoRef)
+  const { poses, isLoading } = usePose(videoRef, cameraEnabled)
   const { isJumping, currentHipHeight } = useJumpDetection(poses, baselineHipHeight)
   const [videoReady, setVideoReady] = useState(false)
   const [posesDetected, setPosesDetected] = useState(false)
 
-  // Start webcam
+  // Start/stop webcam based on camera toggle
+  // Use ref to track stream to avoid dependency loop
+  const streamRef = useRef(null)
+  
   useEffect(() => {
+    // Store stream in ref for cleanup
+    streamRef.current = stream
+  }, [stream])
+  
+  useEffect(() => {
+    if (!cameraEnabled) {
+      // Camera is OFF - stop all tracks and clear video
+      const currentStream = streamRef.current
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop())
+        setStream(null)
+        streamRef.current = null
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null
+        setVideoReady(false)
+      }
+      return
+    }
+
+    // Prevent multiple starts - check if stream already exists
+    if (streamRef.current) {
+      return // Already have a stream, don't start again
+    }
+
+    // Camera is ON - start webcam (only once)
     async function startWebcam() {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: 'user', width: 640, height: 480 } 
         })
+        
+        // Check if camera was disabled while waiting for permission
+        if (!cameraEnabled || streamRef.current) {
+          mediaStream.getTracks().forEach(track => track.stop())
+          return
+        }
+        
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream
+          streamRef.current = mediaStream
           setStream(mediaStream)
           
           // Wait for video to be ready
@@ -40,16 +77,20 @@ function CalibrationPanel({ onComplete }) {
       } catch (error) {
         console.error('Error accessing webcam:', error)
         alert('Could not access webcam. Please allow camera access.')
+        streamRef.current = null
       }
     }
     startWebcam()
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop())
+      // Cleanup: stop all tracks when component unmounts or camera is toggled off
+      const currentStream = streamRef.current
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop())
+        streamRef.current = null
       }
     }
-  }, [])
+  }, [cameraEnabled]) // Removed stream from dependencies to prevent loop
 
   // Track when poses are detected
   useEffect(() => {
@@ -155,8 +196,13 @@ function CalibrationPanel({ onComplete }) {
       color: 'white'
     }}>
       <h1>Calibration</h1>
-      {isLoading && <p>Loading pose detection model...</p>}
-      {!videoReady && !isLoading && <p style={{ color: '#ffa500' }}>Waiting for camera...</p>}
+      {!cameraEnabled && (
+        <p style={{ color: '#ff6b6b', fontSize: '1.2em', marginBottom: '20px' }}>
+          Camera is off. Turn it on to play.
+        </p>
+      )}
+      {cameraEnabled && isLoading && <p>Loading pose detection model...</p>}
+      {cameraEnabled && !videoReady && !isLoading && <p style={{ color: '#ffa500' }}>Waiting for camera...</p>}
       {videoReady && !posesDetected && !isLoading && step === 0 && (
         <p style={{ color: '#ffa500' }}>Stand in view - Make sure you're fully visible!</p>
       )}
