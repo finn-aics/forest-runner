@@ -24,7 +24,7 @@ function App() {
   return (
     <div className="app">
       {/* CAMERA TOGGLE: Always visible for privacy control */}
-      <div style={{ position: 'fixed', top: 10, left: 10, zIndex: 1000, background: 'white', padding: '10px', borderRadius: '5px', border: '1px solid #ccc', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ position: 'fixed', top: 10, right: 10, zIndex: 1000, background: 'white', padding: '10px', borderRadius: '5px', border: '1px solid #ccc', display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
           <input
             type="checkbox"

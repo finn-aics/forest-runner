@@ -520,7 +520,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
       {/* Hearts Display */}
       <div style={{
         position: 'absolute',
-        top: '20px',
+        top: '70px',
         right: '20px',
         color: 'white',
         fontSize: '28px',
