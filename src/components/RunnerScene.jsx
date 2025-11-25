@@ -585,8 +585,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         }}
         style={{
           position: 'absolute',
-          top: '20px',
-          right: '20px',
+          top: '60px',
+          left: '20px',
           padding: '10px 20px',
           fontSize: '16px',
           fontWeight: 'bold',
