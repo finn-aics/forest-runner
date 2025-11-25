@@ -30,8 +30,8 @@ function Player({ position, isJumping, playerState = 'running', customization, o
 
     // Detect jump start directly in useFrame for minimal latency (no useEffect delay)
     // Jump on rising edge (false -> true) when grounded - check every frame
-    // Prevent jumping during tumble (isJumping is already gated in RunnerScene)
-    if (isJumping && !prevJumping.current && isGrounded.current && playerState === 'running') {
+    // Allow jumping during running and tumbling states (game over already handled above)
+    if (isJumping && !prevJumping.current && isGrounded.current && (playerState === 'running' || playerState === 'tumbling')) {
       velocityY.current = JUMP_FORCE
       isGrounded.current = false
     }

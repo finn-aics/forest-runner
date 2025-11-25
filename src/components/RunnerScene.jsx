@@ -128,8 +128,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   
   // DEBUG MODE: Use Up Arrow instead of pose detection (or if camera is disabled)
   const rawIsJumping = (debugMode || !cameraEnabled) ? debugJumping : poseJumping
-  // Prevent jumping during tumble state
-  const isJumping = playerState === 'running' ? rawIsJumping : false
+  // Allow jumping during running and tumbling states (block during game over)
+  const isJumping = (playerState === 'running' || playerState === 'tumbling') ? rawIsJumping : false
   
   // DEBUG MODE: Up Arrow keyboard listener
   useEffect(() => {
