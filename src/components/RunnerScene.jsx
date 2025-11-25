@@ -449,7 +449,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         // (playerZ is already defined above in this scope)
         updated.forEach(obs => {
           // Check if log has passed the player
-          const hasPassedPlayer = obs.z > playerZ
+          const hasPassedPlayer = obs.z > 26.5
           
           // If log has passed player, award score (helper handles all checks)
           if (hasPassedPlayer) {
