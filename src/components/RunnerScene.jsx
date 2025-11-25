@@ -47,6 +47,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   const heartsRef = useRef(3) // Track latest hearts value for tumble cleanup
   const playerStateRef = useRef('running') // Track latest playerState for tumble speed calculation
   const wasCollidingRef = useRef(false) // Track if player was colliding in previous frame (edge detection)
+  const prevCameraEnabledRef = useRef(cameraEnabled) // Track previous camera state to detect ON → OFF transition
   
   // Tumble timer pause-aware tracking
   const tumbleStartTimeRef = useRef(null) // When tumble started (timestamp)
@@ -108,6 +109,18 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [setIsPaused])
+  
+  // Auto-pause when camera is turned OFF
+  useEffect(() => {
+    // Detect transition from ON → OFF
+    if (prevCameraEnabledRef.current === true && cameraEnabled === false) {
+      setIsPaused(true)
+      setUnpauseCountdown(0) // Clear any active countdown
+      console.log("Auto-paused because camera was turned off")
+    }
+    // Update previous value for next comparison
+    prevCameraEnabledRef.current = cameraEnabled
+  }, [cameraEnabled, setIsPaused])
   
   // Countdown timer effect - handles 3→2→1 countdown before unpausing
   useEffect(() => {
