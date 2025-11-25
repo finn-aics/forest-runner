@@ -111,10 +111,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
       const tumbleDuration = 1500 // 1500ms of tumble (reduced from 3000)
       const tumbleTimer = setTimeout(() => {
         setPlayerState('running') // Return to running after tumble
-        // Clear hit obstacles when tumble ends so new obstacles can hit
-        // This allows the next hit to be processed (including game over hit when hearts === 0)
-        hitObstaclesRef.current.clear()
         // Reset collision state so player can be hit again after separating from logs
+        // NOTE: Do NOT clear hitObstaclesRef here - hit obstacles must persist so they never award score
         wasCollidingRef.current = false
       }, tumbleDuration)
       
