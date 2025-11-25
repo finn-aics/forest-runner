@@ -18,6 +18,14 @@ const FIRST_LOG_DELAY = 500 // Delay before first log appears (reduced from 2000
 const LOG_DESPAWN_DISTANCE = 15 // Distance behind player before log despawns (increased from ~1)
 const MIN_LOG_DISTANCE_Z = 8 // Minimum distance along Z axis between logs (prevents clumping)
 
+// Helper function for countdown color-coding
+function getCountdownColor(value) {
+  if (value === 3) return "red"
+  if (value === 2) return "yellow"
+  if (value === 1) return "green"
+  return "white"
+}
+
 function RunnerScene({ calibrationData, customization, debugMode = false, cameraEnabled = false }) {
   const videoRef = useRef(null)
   const playerPositionRef = useRef([0, 0, 0])
@@ -707,8 +715,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(0, 0, 0, 0.6)',
-          backdropFilter: 'blur(2px)',
+          background: (isPaused && unpauseCountdown === 0) ? 'rgba(0, 0, 0, 0.6)' : 'transparent',
+          backdropFilter: (isPaused && unpauseCountdown === 0) ? 'blur(2px)' : 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -716,13 +724,13 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
           pointerEvents: 'none'
         }}>
           <div style={{
-            color: 'white',
+            color: unpauseCountdown > 0 ? getCountdownColor(unpauseCountdown) : 'white',
             fontSize: '4em',
             fontWeight: 'bold',
             textShadow: '3px 3px 6px rgba(0,0,0,0.9)',
             letterSpacing: '0.1em'
           }}>
-            {unpauseCountdown > 0 ? `Starting in ${unpauseCountdown}...` : 'PAUSED'}
+            {unpauseCountdown > 0 ? unpauseCountdown : 'PAUSED'}
           </div>
         </div>
       )}

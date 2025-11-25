@@ -6,6 +6,14 @@ import { useJumpDetection } from '../hooks/useJumpDetection'
 // are saved, uploaded, cached, or stored anywhere. Video stream is only displayed
 // in the browser and processed frame-by-frame, then immediately discarded.
 
+// Helper function for countdown color-coding (matches RunnerScene)
+function getCountdownColor(value) {
+  if (value === 3) return "red"
+  if (value === 2) return "yellow"
+  if (value === 1) return "green"
+  return "white"
+}
+
 function CalibrationPanel({ cameraEnabled, onComplete }) {
   const videoRef = useRef(null)
   const [step, setStep] = useState(0) // 0 = waiting for start, 1 = standing, 2 = jumping
@@ -239,7 +247,7 @@ function CalibrationPanel({ cameraEnabled, onComplete }) {
           fontSize: '5em', 
           fontWeight: 'bold', 
           margin: '20px',
-          color: countdown === 1 ? '#0f0' : '#ffa500'
+          color: getCountdownColor(countdown)
         }}>
           {countdown}
         </div>
