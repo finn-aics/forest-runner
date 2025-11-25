@@ -45,6 +45,10 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   const pausedAccumulatedTimeRef = useRef(0) // Total paused time accumulated during this tumble (ms)
   const tumbleTimerIntervalRef = useRef(null) // Reference to the interval checking tumble duration
   
+  // Invincibility timer - simple countdown that freezes when paused (by virtue of pause check at top of loop)
+  const invincibilityTimerRef = useRef(0) // Remaining invincibility time in ms (0 = not invincible)
+  const lastInvincibilityUpdateRef = useRef(null) // Timestamp of last timer update (for accurate elapsed time calculation)
+  
   // Single deterministic spawn loop tracking
   const nextSpawnTimeRef = useRef(null) // Time (ms) when next log should spawn
   const lastSpawnTimeRef = useRef(0) // Time (ms) when last log spawned
@@ -72,6 +76,11 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   
   useEffect(() => {
     isPausedRef.current = isPaused // Keep isPaused ref in sync
+    
+    // Reset invincibility timer timestamp when unpausing (prevents including paused time in elapsed calculation)
+    if (!isPaused && invincibilityTimerRef.current > 0 && lastInvincibilityUpdateRef.current !== null) {
+      lastInvincibilityUpdateRef.current = Date.now()
+    }
   }, [isPaused])
   
   // Helper function to award score for a log (single point of score increase)
@@ -112,6 +121,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     setGameKey(prev => prev + 1) // Force re-render with new key
     playerPositionRef.current = [0, 0.5, 26] // Reset player position (z=26)
     wasCollidingRef.current = false // Reset collision state for edge detection
+    invincibilityTimerRef.current = 0 // Reset invincibility timer
+    lastInvincibilityUpdateRef.current = null // Reset invincibility update timestamp
     resetSpawnTracking() // Reset spawn tracking for new run
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(BASE_LOG_SPEED)
@@ -362,13 +373,25 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         return
       }
       
+      // Decrement invincibility timer (only when not paused - timer freezes during pause)
+      const now = Date.now()
+      if (invincibilityTimerRef.current > 0) {
+        if (lastInvincibilityUpdateRef.current === null) {
+          lastInvincibilityUpdateRef.current = now
+        } else {
+          const elapsed = now - lastInvincibilityUpdateRef.current
+          invincibilityTimerRef.current = Math.max(0, invincibilityTimerRef.current - elapsed)
+          lastInvincibilityUpdateRef.current = now
+        }
+      } else {
+        lastInvincibilityUpdateRef.current = null
+      }
+      
       // Safety check: stop if game ended or speed is 0
       if (gameSpeedRef.current === 0 || gameOverRef.current) {
         spawnLoopActiveRef.current = false
         return
       }
-      
-      const now = Date.now()
       
       // Spawn logic: check if it's time to spawn a new log
       if (nextSpawnTimeRef.current !== null && now >= nextSpawnTimeRef.current) {
@@ -485,7 +508,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         
         // Process collision only on ENTER edge (prevents double hits from same log or overlapping logs)
         // CRITICAL: Double-check we're not in tumble before processing (defense in depth)
-        if (collisionEnter && collisionObsId !== null && !isInTumble && playerStateRef.current === 'running') {
+        // CRITICAL: Check invincibility timer - prevent damage if still invincible
+        if (collisionEnter && collisionObsId !== null && !isInTumble && playerStateRef.current === 'running' && invincibilityTimerRef.current <= 0) {
           // Mark the colliding obstacle as having hit the player (prevents scoring)
           const hitObsIndex = updated.findIndex(obs => obs.id === collisionObsId)
           if (hitObsIndex !== -1) {
@@ -510,15 +534,22 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
             // Player has hearts remaining - lose one and enter tumble
             setHearts(prev => prev - 1)
             setPlayerState('tumbling') // Enter tumble state (prevents jumping and further collisions)
+            // Start invincibility period (0.75s = 750ms)
+            invincibilityTimerRef.current = 750
+            lastInvincibilityUpdateRef.current = Date.now()
           } else if (currentHearts === 1) {
             // Last heart - lose it and immediately trigger game over (no tumble)
             setHearts(0)
             setGameOver(true)
             setPlayerState('gameOver')
+            // Start invincibility period even on game over (prevent multiple hits in same frame)
+            invincibilityTimerRef.current = 750
+            lastInvincibilityUpdateRef.current = Date.now()
           } else if (currentHearts === 0) {
             // Safety check: if somehow we hit with 0 hearts, trigger game over
             setGameOver(true)
             setPlayerState('gameOver')
+            // No invincibility needed here as game is already over
           }
         }
         
