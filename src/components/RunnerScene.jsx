@@ -39,6 +39,12 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   const playerStateRef = useRef('running') // Track latest playerState for tumble speed calculation
   const wasCollidingRef = useRef(false) // Track if player was colliding in previous frame (edge detection)
   
+  // Tumble timer pause-aware tracking
+  const tumbleStartTimeRef = useRef(null) // When tumble started (timestamp)
+  const pausedStartTimeRef = useRef(null) // When pause started during tumble (null if not paused)
+  const pausedAccumulatedTimeRef = useRef(0) // Total paused time accumulated during this tumble (ms)
+  const tumbleTimerIntervalRef = useRef(null) // Reference to the interval checking tumble duration
+  
   // Single deterministic spawn loop tracking
   const nextSpawnTimeRef = useRef(null) // Time (ms) when next log should spawn
   const lastSpawnTimeRef = useRef(0) // Time (ms) when last log spawned
@@ -112,19 +118,82 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   }
   
   // Tumble state handler - enters tumble state after hit, exits after duration
+  // Pause-aware: timer only counts down when game is not paused
   useEffect(() => {
     if (playerState === 'tumbling') {
       const tumbleDuration = 1500 // 1500ms of tumble (reduced from 3000)
-      const tumbleTimer = setTimeout(() => {
-        setPlayerState('running') // Return to running after tumble
-        // Reset collision state so player can be hit again after separating from logs
-        // NOTE: Do NOT clear hitObstaclesRef here - hit obstacles must persist so they never award score
-        wasCollidingRef.current = false
-      }, tumbleDuration)
       
-      return () => clearTimeout(tumbleTimer)
+      // Initialize tumble tracking
+      const startTime = Date.now()
+      tumbleStartTimeRef.current = startTime
+      pausedAccumulatedTimeRef.current = 0
+      // If already paused when tumble starts, record pause start time immediately
+      pausedStartTimeRef.current = isPausedRef.current ? startTime : null
+      
+      // Check tumble duration periodically (every 50ms for responsiveness)
+      const checkTumbleDuration = () => {
+        // Pause check: stop timer progression when paused
+        if (isPausedRef.current) {
+          return // Timer is frozen, don't check duration
+        }
+        
+        const now = Date.now()
+        const elapsedTime = now - startTime
+        const activeTime = elapsedTime - pausedAccumulatedTimeRef.current
+        
+        // Only end tumble when active (non-paused) time exceeds duration
+        if (activeTime >= tumbleDuration) {
+          setPlayerState('running') // Return to running after tumble
+          // Reset collision state so player can be hit again after separating from logs
+          // NOTE: Do NOT clear hitObstaclesRef here - hit obstacles must persist so they never award score
+          wasCollidingRef.current = false
+          // Clean up
+          if (tumbleTimerIntervalRef.current) {
+            clearInterval(tumbleTimerIntervalRef.current)
+            tumbleTimerIntervalRef.current = null
+          }
+        }
+      }
+      
+      // Start checking every 50ms
+      tumbleTimerIntervalRef.current = setInterval(checkTumbleDuration, 50)
+      
+      return () => {
+        if (tumbleTimerIntervalRef.current) {
+          clearInterval(tumbleTimerIntervalRef.current)
+          tumbleTimerIntervalRef.current = null
+        }
+      }
+    } else {
+      // Not tumbling - clean up any running timer
+      if (tumbleTimerIntervalRef.current) {
+        clearInterval(tumbleTimerIntervalRef.current)
+        tumbleTimerIntervalRef.current = null
+      }
+      // Reset tracking
+      tumbleStartTimeRef.current = null
+      pausedAccumulatedTimeRef.current = 0
+      pausedStartTimeRef.current = null
     }
   }, [playerState])
+  
+  // Track pause state changes during tumble to accumulate paused time
+  useEffect(() => {
+    if (playerState !== 'tumbling') {
+      pausedStartTimeRef.current = null
+      return
+    }
+    
+    if (isPaused && pausedStartTimeRef.current === null) {
+      // Just entered pause during tumble - record pause start time
+      pausedStartTimeRef.current = Date.now()
+    } else if (!isPaused && pausedStartTimeRef.current !== null) {
+      // Just exited pause during tumble - accumulate paused duration
+      const pauseDuration = Date.now() - pausedStartTimeRef.current
+      pausedAccumulatedTimeRef.current += pauseDuration
+      pausedStartTimeRef.current = null
+    }
+  }, [isPaused, playerState])
 
   const { poses, isLoading } = usePose(videoRef, cameraEnabled && !debugMode)
   const { isJumping: poseJumping } = useJumpDetection(
