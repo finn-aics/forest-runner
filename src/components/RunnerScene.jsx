@@ -39,7 +39,11 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   const [playerState, setPlayerState] = useState('running') // State machine: 'running' | 'tumbling' | 'gameOver'
   const [isPaused, setIsPaused] = useState(false)
   const [unpauseCountdown, setUnpauseCountdown] = useState(0) // Countdown before unpausing (0 = no countdown)
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0) // Elapsed active play time for difficulty ramp
   const isPausedRef = useRef(false) // Track latest isPaused for game loop
+  const runStartTimeRef = useRef(null) // Timestamp when current run started (for difficulty tracking)
+  const pausedTimeAccumulatedRef = useRef(0) // Total paused time accumulated during this run (ms)
+  const runPauseStartTimeRef = useRef(null) // When pause started during run (null if not paused)
   const scoredObstaclesRef = useRef(new Set())
   const hitObstaclesRef = useRef(new Set()) // Track obstacles that have already hit the player
   const gameSpeedRef = useRef(0) // Track latest gameSpeed for spawn checks
@@ -90,6 +94,18 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     // Reset invincibility timer timestamp when unpausing (prevents including paused time in elapsed calculation)
     if (!isPaused && invincibilityTimerRef.current > 0 && lastInvincibilityUpdateRef.current !== null) {
       lastInvincibilityUpdateRef.current = Date.now()
+    }
+    
+    // Track paused time for difficulty ramp (freeze difficulty during pause)
+    const now = Date.now()
+    if (isPaused && runPauseStartTimeRef.current === null && runStartTimeRef.current !== null) {
+      // Just entered pause - record pause start time
+      runPauseStartTimeRef.current = now
+    } else if (!isPaused && runPauseStartTimeRef.current !== null) {
+      // Just exited pause - accumulate the paused duration
+      const pauseDuration = now - runPauseStartTimeRef.current
+      pausedTimeAccumulatedRef.current += pauseDuration
+      runPauseStartTimeRef.current = null
     }
   }, [isPaused])
   
@@ -183,9 +199,14 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     wasCollidingRef.current = false // Reset collision state for edge detection
     invincibilityTimerRef.current = 0 // Reset invincibility timer
     lastInvincibilityUpdateRef.current = null // Reset invincibility update timestamp
+    setRunElapsedSeconds(0) // Reset difficulty ramp timer
+    runStartTimeRef.current = null // Reset run start time
+    pausedTimeAccumulatedRef.current = 0 // Reset paused time accumulator
+    runPauseStartTimeRef.current = null // Reset pause start time
     resetSpawnTracking() // Reset spawn tracking for new run
     // Manually restart game speed after reset (since isLoading won't change)
     setGameSpeed(BASE_LOG_SPEED)
+    console.log("New run: difficultyMultiplier reset to 1.0")
   }
   
   // Tumble state handler - enters tumble state after hit, exits after duration
@@ -453,6 +474,17 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         return
       }
       
+      // Track elapsed run time for difficulty ramp (only when actively playing - paused check is above)
+      if (runStartTimeRef.current === null) {
+        runStartTimeRef.current = now
+        pausedTimeAccumulatedRef.current = 0
+      }
+      // Calculate elapsed time excluding paused periods
+      const totalElapsed = now - runStartTimeRef.current
+      const activeElapsed = totalElapsed - pausedTimeAccumulatedRef.current
+      const elapsedSeconds = activeElapsed / 1000
+      setRunElapsedSeconds(elapsedSeconds)
+      
       // Spawn logic: check if it's time to spawn a new log
       if (nextSpawnTimeRef.current !== null && now >= nextSpawnTimeRef.current) {
         // Calculate time since last spawn for spacing enforcement
@@ -503,10 +535,17 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         }
       }
       
+      // Calculate difficulty multiplier from elapsed run time (slow, gradual ramp with no cap)
+      // +1.0x speed after 3 minutes (180 seconds) of continuous play, continues to ramp linearly
+      // Use computed elapsedSeconds (not state) to avoid stale closure issues
+      const difficultyMultiplier = 1 + elapsedSeconds / 180
+      
       setObstacles(prev => {
         // Calculate effective game speed - slower during tumble (logs move slower)
         // Use ref to get current playerState (avoids stale closure)
-        const effectiveSpeed = playerStateRef.current === 'tumbling' ? gameSpeed * 0.4 : gameSpeed
+        const baseEffectiveSpeed = playerStateRef.current === 'tumbling' ? gameSpeed * 0.4 : gameSpeed
+        // Apply difficulty multiplier to log movement speed
+        const effectiveSpeed = baseEffectiveSpeed * difficultyMultiplier
         
         // Edge-detection based collision: only trigger on collision ENTER, not while overlapping
         let isCurrentlyColliding = false
