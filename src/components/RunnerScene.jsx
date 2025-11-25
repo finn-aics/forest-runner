@@ -29,6 +29,8 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   const [gameKey, setGameKey] = useState(0)
   const [hearts, setHearts] = useState(3) // Lives system: start with 3 hearts
   const [playerState, setPlayerState] = useState('running') // State machine: 'running' | 'tumbling' | 'gameOver'
+  const [isPaused, setIsPaused] = useState(false)
+  const isPausedRef = useRef(false) // Track latest isPaused for game loop
   const scoredObstaclesRef = useRef(new Set())
   const hitObstaclesRef = useRef(new Set()) // Track obstacles that have already hit the player
   const gameSpeedRef = useRef(0) // Track latest gameSpeed for spawn checks
@@ -61,6 +63,10 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   useEffect(() => {
     playerStateRef.current = playerState // Keep playerState ref in sync for tumble speed
   }, [playerState])
+  
+  useEffect(() => {
+    isPausedRef.current = isPaused // Keep isPaused ref in sync
+  }, [isPaused])
   
   // Helper function to award score for a log (single point of score increase)
   function awardScoreForObstacle(id) {
@@ -282,6 +288,11 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     spawnLoopActiveRef.current = true
 
     const moveInterval = setInterval(() => {
+      // Pause check: stop all game updates if paused
+      if (isPausedRef.current) {
+        return
+      }
+      
       // Safety check: stop if game ended or speed is 0
       if (gameSpeedRef.current === 0 || gameOverRef.current) {
         spawnLoopActiveRef.current = false
@@ -563,6 +574,34 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         Score: {score}
       </div>
       
+      {/* Pause/Resume Button */}
+      <button
+        onClick={() => {
+          setIsPaused(prev => {
+            const newPaused = !prev
+            console.log("Paused state:", newPaused)
+            return newPaused
+          })
+        }}
+        style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          padding: '10px 20px',
+          fontSize: '16px',
+          fontWeight: 'bold',
+          cursor: 'pointer',
+          background: '#4a7c59',
+          color: 'white',
+          border: 'none',
+          borderRadius: '5px',
+          zIndex: 100,
+          textShadow: '1px 1px 2px rgba(0,0,0,0.8)'
+        }}
+      >
+        {isPaused ? 'Resume' : 'Pause'}
+      </button>
+      
       {/* Hearts Display */}
       <div style={{
         position: 'absolute',
@@ -618,7 +657,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         </mesh>
 
         {/* Player - positioned at z=26 */}
-        <Player position={26} isJumping={isJumping} playerState={playerState} customization={customization} onPositionUpdate={updatePlayerPosition} />
+        <Player position={26} isJumping={isJumping} playerState={playerState} customization={customization} onPositionUpdate={updatePlayerPosition} isPaused={isPaused} />
 
         {/* Obstacles - logs positioned slightly lower to match shallower height */}
         {obstacles.map(obs => (

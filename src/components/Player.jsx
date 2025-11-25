@@ -5,7 +5,7 @@ import { useFrame } from '@react-three/fiber'
 const JUMP_FORCE = 0.3 // Jump height - comfortable clearance (reduced from 0.9, between original 0.18 and too-high 0.9)
 const GRAVITY = -0.8 // Stronger gravity for snappier jump (was -0.5)
 
-function Player({ position, isJumping, playerState = 'running', customization, onPositionUpdate }) {
+function Player({ position, isJumping, playerState = 'running', customization, onPositionUpdate, isPaused = false }) {
   const playerRef = useRef()
   const velocityY = useRef(0)
   const isGrounded = useRef(true)
@@ -16,6 +16,11 @@ function Player({ position, isJumping, playerState = 'running', customization, o
 
   useFrame(() => {
     if (!playerRef.current) return
+    
+    // Pause check: stop all player updates if paused
+    if (isPaused) {
+      return
+    }
     
     // Stop all movement during game over
     if (playerState === 'gameOver') {
