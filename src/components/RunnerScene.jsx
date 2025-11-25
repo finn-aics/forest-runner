@@ -83,6 +83,22 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     }
   }, [isPaused])
   
+  // Auto-pause when tab becomes hidden (visibility change)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setIsPaused(true)
+        console.log("Auto-paused because tab is hidden")
+      }
+      // When tab becomes visible, do nothing - player must press Resume manually
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [setIsPaused])
+  
   // Helper function to award score for a log (single point of score increase)
   function awardScoreForObstacle(id) {
     // If this log ever hit the player, it should NEVER give score.
