@@ -701,7 +701,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
 
       {/* Camera OFF Message */}
       {!cameraEnabled && !debugMode && (
-        <div style={{
+        <div className="camera-off-message" style={{
           position: 'absolute',
           top: '50%',
           left: '50%',
