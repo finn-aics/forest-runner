@@ -30,6 +30,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
   const [hearts, setHearts] = useState(3) // Lives system: start with 3 hearts
   const [playerState, setPlayerState] = useState('running') // State machine: 'running' | 'tumbling' | 'gameOver'
   const [isPaused, setIsPaused] = useState(false)
+  const [unpauseCountdown, setUnpauseCountdown] = useState(0) // Countdown before unpausing (0 = no countdown)
   const isPausedRef = useRef(false) // Track latest isPaused for game loop
   const scoredObstaclesRef = useRef(new Set())
   const hitObstaclesRef = useRef(new Set()) // Track obstacles that have already hit the player
@@ -88,6 +89,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
     const handleVisibilityChange = () => {
       if (document.hidden) {
         setIsPaused(true)
+        setUnpauseCountdown(0) // Clear any active countdown
         console.log("Auto-paused because tab is hidden")
       }
       // When tab becomes visible, do nothing - player must press Resume manually
@@ -98,6 +100,27 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [setIsPaused])
+  
+  // Countdown timer effect - handles 3→2→1 countdown before unpausing
+  useEffect(() => {
+    if (unpauseCountdown <= 0) {
+      return // No countdown active
+    }
+    
+    // Start 1-second timeout to decrement countdown
+    const timer = setTimeout(() => {
+      if (unpauseCountdown === 1) {
+        // Countdown finished - actually unpause the game
+        setIsPaused(false)
+        setUnpauseCountdown(0)
+      } else {
+        // Decrement countdown
+        setUnpauseCountdown(prev => prev - 1)
+      }
+    }, 1000)
+    
+    return () => clearTimeout(timer)
+  }, [unpauseCountdown, setIsPaused])
   
   // Helper function to award score for a log (single point of score increase)
   function awardScoreForObstacle(id) {
@@ -677,7 +700,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
       )}
       
       {/* Pause Overlay */}
-      {isPaused && (
+      {(isPaused || unpauseCountdown > 0) && (
         <div style={{
           position: 'fixed',
           top: 0,
@@ -699,7 +722,7 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
             textShadow: '3px 3px 6px rgba(0,0,0,0.9)',
             letterSpacing: '0.1em'
           }}>
-            PAUSED
+            {unpauseCountdown > 0 ? `Starting in ${unpauseCountdown}...` : 'PAUSED'}
           </div>
         </div>
       )}
@@ -721,11 +744,20 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
       {/* Pause/Resume Button */}
       <button
         onClick={() => {
-          setIsPaused(prev => {
-            const newPaused = !prev
-            console.log("Paused state:", newPaused)
-            return newPaused
-          })
+          if (isPaused === false) {
+            // Game running - pause immediately
+            setIsPaused(true)
+            setUnpauseCountdown(0) // Ensure no countdown
+            console.log("Paused state: true")
+          } else {
+            // Game paused - start countdown if not already counting down
+            if (unpauseCountdown > 0) {
+              return // Ignore extra clicks during countdown
+            }
+            // Start countdown (game stays paused until countdown finishes)
+            setUnpauseCountdown(3)
+            console.log("Starting unpause countdown: 3")
+          }
         }}
         style={{
           position: 'absolute',
