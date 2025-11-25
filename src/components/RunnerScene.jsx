@@ -560,6 +560,34 @@ function RunnerScene({ calibrationData, customization, debugMode = false, camera
         </div>
       )}
       
+      {/* Pause Overlay */}
+      {isPaused && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(2px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 50,
+          pointerEvents: 'none'
+        }}>
+          <div style={{
+            color: 'white',
+            fontSize: '4em',
+            fontWeight: 'bold',
+            textShadow: '3px 3px 6px rgba(0,0,0,0.9)',
+            letterSpacing: '0.1em'
+          }}>
+            PAUSED
+          </div>
+        </div>
+      )}
+      
       {/* Score Display */}
       <div style={{
         position: 'absolute',
